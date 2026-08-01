@@ -1,0 +1,52 @@
+package httpapi
+
+import (
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func NewRouter(logger *slog.Logger, db *pgxpool.Pool) http.Handler {
+	handler := Handler{DB: db}
+
+	router := chi.NewRouter()
+
+	router.Use(middleware.RequestID)
+	router.Use(middleware.RealIP)
+	router.Use(middleware.Recoverer)
+	router.Use(requestLogger(logger))
+	router.Use(middleware.Timeout(15 * time.Second))
+
+	router.Get("/health", handler.Health)
+
+	router.Route("/api/v1", func(r chi.Router) {
+		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{
+				"message": "MCP Gateway API",
+			})
+		})
+	})
+
+	return router
+}
+
+func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+
+			next.ServeHTTP(w, r)
+
+			logger.Info("http request completed",
+				"request_id", middleware.GetReqID(r.Context()),
+				"method", r.Method,
+				"path", r.URL.Path,
+				"duration_ms", time.Since(start).Milliseconds(),
+			)
+		})
+	}
+}
