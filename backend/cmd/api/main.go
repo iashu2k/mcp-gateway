@@ -20,6 +20,7 @@ import (
 
 func main() {
 	_ = godotenv.Load("../.env")
+	_ = godotenv.Load(".env")
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -31,20 +32,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
-
-	db, err := database.NewPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPool(context.Background(), cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("connect to PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 	defer db.Close()
 
-	router := httpapi.NewRouter(logger, db)
-
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:           router,
+		Handler:           httpapi.NewRouter(logger, db),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -54,7 +51,8 @@ func main() {
 			"port", cfg.HTTPPort,
 		)
 
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := server.ListenAndServe(); err != nil &&
+			!errors.Is(err, http.ErrServerClosed) {
 			logger.Error("HTTP server failed", "error", err)
 			os.Exit(1)
 		}
@@ -66,7 +64,10 @@ func main() {
 
 	logger.Info("shutting down MCP Gateway API")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(
+		context.Background(),
+		10*time.Second,
+	)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
