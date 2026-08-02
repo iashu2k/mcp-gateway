@@ -1,5 +1,6 @@
 # Environment and secrets
 .env
+scripts/seed_users.sql
 
 # Go
 backend/bin/

@@ -7,20 +7,36 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/iashu2k/mcp-gateway/backend/internal/auth"
+	"github.com/iashu2k/mcp-gateway/backend/internal/config"
+	"github.com/iashu2k/mcp-gateway/backend/internal/domain"
 	"github.com/iashu2k/mcp-gateway/backend/internal/repository"
 	"github.com/iashu2k/mcp-gateway/backend/internal/service"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func NewRouter(logger *slog.Logger, db *pgxpool.Pool) http.Handler {
+func NewRouter(
+	logger *slog.Logger,
+	db *pgxpool.Pool,
+	cfg config.Config,
+) http.Handler {
 	serverRepository := repository.NewServerRepository(db)
 	toolRepository := repository.NewToolRepository(db)
+	userRepository := repository.NewUserRepository(db)
 
 	serverService := service.NewServerService(serverRepository)
 	toolService := service.NewToolService(toolRepository, serverRepository)
 
+	tokenService := auth.NewTokenService(
+		cfg.JWTSecret,
+		cfg.JWTIssuer,
+		time.Duration(cfg.JWTTTLMinutes)*time.Minute,
+	)
+	authService := service.NewAuthService(userRepository, tokenService)
+
 	serverHandler := NewServerHandler(serverService)
 	toolHandler := NewToolHandler(toolService)
+	authHandler := NewAuthHandler(authService)
 
 	router := chi.NewRouter()
 
@@ -39,19 +55,37 @@ func NewRouter(logger *slog.Logger, db *pgxpool.Pool) http.Handler {
 			})
 		})
 
-		r.Route("/servers", func(r chi.Router) {
-			r.Post("/", serverHandler.Create)
-			r.Get("/", serverHandler.List)
-			r.Get("/{serverID}", serverHandler.GetByID)
-			r.Patch("/{serverID}", serverHandler.Update)
-			r.Delete("/{serverID}", serverHandler.Delete)
+		r.Post("/auth/login", authHandler.Login)
 
-			r.Route("/{serverID}/tools", func(r chi.Router) {
-				r.Post("/", toolHandler.Create)
-				r.Get("/", toolHandler.ListByServerID)
-				r.Get("/{toolID}", toolHandler.GetByID)
-				r.Patch("/{toolID}", toolHandler.Update)
-				r.Delete("/{toolID}", toolHandler.Delete)
+		r.Group(func(r chi.Router) {
+			r.Use(RequireAuthentication(tokenService))
+
+			r.Get("/auth/me", authHandler.Me)
+
+			r.Route("/servers", func(r chi.Router) {
+				r.Get("/", serverHandler.List)
+				r.Get("/{serverID}", serverHandler.GetByID)
+
+				r.Get("/{serverID}/tools/", toolHandler.ListByServerID)
+				r.Get("/{serverID}/tools/{toolID}", toolHandler.GetByID)
+
+				r.Group(func(r chi.Router) {
+					r.Use(RequireRoles(domain.RoleAdmin))
+
+					r.Post("/", serverHandler.Create)
+					r.Patch("/{serverID}", serverHandler.Update)
+					r.Delete("/{serverID}", serverHandler.Delete)
+
+					r.Post("/{serverID}/tools/", toolHandler.Create)
+					r.Patch(
+						"/{serverID}/tools/{toolID}",
+						toolHandler.Update,
+					)
+					r.Delete(
+						"/{serverID}/tools/{toolID}",
+						toolHandler.Delete,
+					)
+				})
 			})
 		})
 	})

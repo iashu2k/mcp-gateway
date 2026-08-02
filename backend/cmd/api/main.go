@@ -41,7 +41,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:           httpapi.NewRouter(logger, db),
+		Handler:           httpapi.NewRouter(logger, db, cfg),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
