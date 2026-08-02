@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
+
 	"net/url"
 	"strings"
 
@@ -294,11 +294,4 @@ func isValidStatus(value string) bool {
 	default:
 		return false
 	}
-}
-
-func isUniqueViolation(err error) bool {
-	return strings.Contains(
-		strings.ToLower(fmt.Sprint(err)),
-		"duplicate key",
-	)
 }

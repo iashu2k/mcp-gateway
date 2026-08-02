@@ -14,8 +14,13 @@ import (
 
 func NewRouter(logger *slog.Logger, db *pgxpool.Pool) http.Handler {
 	serverRepository := repository.NewServerRepository(db)
+	toolRepository := repository.NewToolRepository(db)
+
 	serverService := service.NewServerService(serverRepository)
+	toolService := service.NewToolService(toolRepository, serverRepository)
+
 	serverHandler := NewServerHandler(serverService)
+	toolHandler := NewToolHandler(toolService)
 
 	router := chi.NewRouter()
 
@@ -40,6 +45,14 @@ func NewRouter(logger *slog.Logger, db *pgxpool.Pool) http.Handler {
 			r.Get("/{serverID}", serverHandler.GetByID)
 			r.Patch("/{serverID}", serverHandler.Update)
 			r.Delete("/{serverID}", serverHandler.Delete)
+
+			r.Route("/{serverID}/tools", func(r chi.Router) {
+				r.Post("/", toolHandler.Create)
+				r.Get("/", toolHandler.ListByServerID)
+				r.Get("/{toolID}", toolHandler.GetByID)
+				r.Patch("/{toolID}", toolHandler.Update)
+				r.Delete("/{toolID}", toolHandler.Delete)
+			})
 		})
 	})
 
