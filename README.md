@@ -2,9 +2,9 @@
 
 A self-hosted MCP Gateway for centrally registering, discovering, governing, and observing internal AI-tool integrations.
 
-The project is inspired by the idea of an internal “USB-C for AI agents”: a unified platform where developers and AI agents can discover approved Model Context Protocol (MCP) servers, inspect their tools, invoke approved capabilities through centralized controls, and obtain audit-ready execution history with full observability.
+The project is inspired by the idea of an internal "USB-C for AI agents": a unified platform where developers and AI agents can discover approved Model Context Protocol (MCP) servers, inspect their tools, invoke approved capabilities through centralized controls, and obtain audit-ready execution history with full observability and a modern web interface.
 
-> **Current status:** Phase 6 complete — the gateway now has full observability with Prometheus metrics, invocation history API, and OpenTelemetry tracing.
+> **Current status:** Phase 7 complete — the gateway now has a full-featured React UI for server discovery, tool invocation, and observability.
 
 ---
 
@@ -31,6 +31,7 @@ The project is inspired by the idea of an internal “USB-C for AI agents”: a 
 - [Phase 4: Invocation Gateway](#phase-4-invocation-gateway)
 - [Phase 5: Live GitHub Integration](#phase-5-live-github-integration)
 - [Phase 6: Observability](#phase-6-observability)
+- [Phase 7: React UI](#phase-7-react-ui)
 - [Validation and Testing](#validation-and-testing)
 - [Design Decisions](#design-decisions)
 - [Known Limitations](#known-limitations)
@@ -58,17 +59,19 @@ MCP Gateway addresses this by acting as a secure control plane for internal MCP 
 ```text
                     ┌─────────────────────────────┐
                     │       React Web UI           │
-                    │ Catalog -  Sandbox -  History  │
+                    │ Catalog • Sandbox • History  │
+                    │ Metrics • Admin (Vite+TS)    │
                     └──────────────┬──────────────┘
                                    │
                                    ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Go MCP Gateway                            │
 │                                                                 │
-│ Server Registry -  Tool Catalog -  JWT Auth -  RBAC               │
-│ Invocation Gateway -  JSON Schema Validation -  Audit Records    │
-│ Live GitHub Executor -  Mock Executor -  Upstream Error Capture  │
-│ Prometheus Metrics -  OpenTelemetry Tracing -  History API       │
+│ Server Registry • Tool Catalog • JWT Auth • RBAC               │
+│ Invocation Gateway • JSON Schema Validation • Audit Records    │
+│ Live GitHub Executor • Mock Executor • Upstream Error Capture  │
+│ Prometheus Metrics • OpenTelemetry Tracing • History API       │
+│ CORS Middleware • Structured Logging                           │
 └─────────────┬──────────────────┬──────────────────┬─────────────┘
               │                  │                  │
               ▼                  ▼                  ▼
@@ -80,7 +83,7 @@ MCP Gateway addresses this by acting as a secure control plane for internal MCP 
               ▼
       ┌─────────────────────────────────────────────────────────┐
       │ PostgreSQL                                               │
-      │ Users -  Servers -  Tools -  Invocation Audit Records       │
+      │ Users • Servers • Tools • Invocation Audit Records       │
       └─────────────────────────────────────────────────────────┘
 ```
 
@@ -88,7 +91,7 @@ MCP Gateway addresses this by acting as a secure control plane for internal MCP 
 
 ## Why This Project
 
-This project demonstrates practical backend and AI-platform engineering skills rather than only building a standalone LLM application.
+This project demonstrates practical full-stack and AI-platform engineering skills rather than only building a standalone LLM application.
 
 It focuses on:
 
@@ -103,15 +106,28 @@ It focuses on:
 - Live third-party API integration (GitHub REST)
 - Executor routing and abstraction
 - Durable invocation audit records with upstream error capture
-- **Observability: Prometheus metrics, OpenTelemetry tracing, invocation history API**
+- Observability: Prometheus metrics, OpenTelemetry tracing, invocation history API
+- **Modern React UI with Vite, TypeScript, and Tailwind CSS v4**
+- **Component-based architecture with React Query for data fetching**
+- **Protected routes and authentication context**
 - Secure password handling
 - Structured request logging with status codes
+- CORS configuration for local development
 - Containerized local development
 - Production-style testing and deployment practices
 
 The long-term architecture separates deterministic infrastructure from agentic reasoning.
 
 ```text
+React UI (Vite + TypeScript)
+├── Login page (JWT authentication)
+├── Server catalog (list, search, filter)
+├── Server detail page (tools list)
+├── Tool detail page (schema viewer, invoke sandbox)
+├── Invocation history (table, filters, export)
+├── Metrics dashboard (Prometheus data visualization)
+└── Admin panel (user management, server/tool CRUD)
+
 Go Gateway
 ├── Authentication
 ├── Authorization
@@ -127,6 +143,7 @@ Go Gateway
 │   ├── Prometheus metrics
 │   ├── OpenTelemetry traces
 │   └── Invocation history API
+├── CORS middleware
 └── Health checks
 
 Optional Python Agent Service
@@ -144,14 +161,15 @@ Optional Python Agent Service
 ### Current architecture
 
 ```text
-Developer / API Client
+Developer / API Client / React UI
          │
-         │ HTTP / JSON
+         │ HTTP / JSON / CORS
          ▼
 ┌──────────────────────────────────────┐
 │ Go MCP Gateway                       │
 │                                      │
 │ chi Router                           │
+│ CORS middleware                      │
 │ Request ID middleware                │
 │ Status-aware request logging         │
 │ Timeout middleware                   │
@@ -189,10 +207,42 @@ Developer / API Client
 └──────────────────────────────────────┘
 ```
 
+### React UI architecture
+
+```text
+React App (Vite + TypeScript)
+        │
+        ├── Authentication Context
+        │   ├── JWT token management
+        │   ├── User state
+        │   └── Protected routes
+        │
+        ├── React Query
+        │   ├── Server catalog queries
+        │   ├── Tool detail queries
+        │   ├── Invocation mutations
+        │   └── History queries
+        │
+        ├── API Client (Axios)
+        │   ├── Auth interceptor
+        │   ├── Error handling
+        │   └── 401 redirect
+        │
+        └── Pages
+            ├── Login
+            ├── Servers (list, detail)
+            ├── Tools (detail, invoke sandbox)
+            ├── Invocations (history, filters)
+            └── Admin (future)
+```
+
 ### Invocation request flow with observability
 
 ```text
 POST /api/v1/servers/{serverID}/tools/{toolID}/invoke
+        │
+        ▼
+CORS preflight (OPTIONS) → 200 OK
         │
         ▼
 JWT authentication middleware
@@ -233,38 +283,9 @@ Record Prometheus metrics:
         │
         ▼
 Return structured invocation response
-```
-
-### Target architecture
-
-```text
-React Discovery UI
         │
         ▼
-Go MCP Gateway API
-├── Server Registry
-├── Tool Catalog
-├── JWT / OIDC Authentication
-├── Role-Based Access Control
-├── Server and Tool Permissions
-├── Policy Engine
-├── Tool Invocation Proxy
-│   ├── GitHub REST Executor (live)
-│   ├── Jira Executor (planned)
-│   ├── Slack Executor (planned)
-│   └── MCP Client Executor (planned)
-├── Audit Log Service
-├── Observability
-│   ├── Prometheus metrics (implemented)
-│   ├── OpenTelemetry traces (initialized)
-│   └── Grafana dashboards (planned)
-└── MCP Client / Adapter Layer
-        │
-        ├── GitHub MCP Server or REST API
-        ├── Jira MCP Server
-        ├── Slack MCP Server
-        ├── Confluence MCP Server
-        └── Internal engineering tools
+React UI displays result in sandbox
 ```
 
 ---
@@ -273,8 +294,17 @@ Go MCP Gateway API
 
 | Area | Technology | Purpose |
 |---|---|---|
+| **Frontend framework** | React 18 + TypeScript | Component-based UI |
+| **Build tool** | Vite | Fast dev server, HMR, optimized builds |
+| **Styling** | Tailwind CSS v4 | Utility-first CSS with Oxide engine |
+| **Routing** | React Router v6 | Client-side routing |
+| **Data fetching** | TanStack React Query | Caching, synchronization, mutations |
+| **HTTP client** | Axios | Interceptors, error handling |
+| **Icons** | Lucide React | Consistent icon library |
+| **Date formatting** | date-fns | Lightweight date utilities |
 | Backend language | Go | Concurrent, strongly typed gateway implementation |
 | HTTP routing | `go-chi/chi` | Lightweight REST routing and middleware |
+| CORS | `go-chi/cors` | Cross-origin resource sharing |
 | Database | PostgreSQL 16 | Users, servers, tools, invocation audits |
 | PostgreSQL driver | `pgx/v5` | Native PostgreSQL driver and connection pool |
 | Migrations | `golang-migrate` | Version-controlled schema migrations |
@@ -284,13 +314,12 @@ Go MCP Gateway API
 | JWT library | `github.com/golang-jwt/jwt/v5` | JWT signing, parsing, verification, claims validation |
 | Password hashing | `golang.org/x/crypto/bcrypt` | Password hash generation and comparison |
 | GitHub integration | `google/go-github/v62` | Typed Go client for GitHub REST API v3 |
-| **Metrics** | `prometheus/client_golang` | Prometheus metrics collection and exposition |
-| **Tracing** | `go.opentelemetry.io/otel` | OpenTelemetry distributed tracing |
+| Metrics | `prometheus/client_golang` | Prometheus metrics collection and exposition |
+| Tracing | `go.opentelemetry.io/otel` | OpenTelemetry distributed tracing |
 | Configuration | Environment variables + `godotenv` | Local configuration and secrets loading |
 | Logging | Go `log/slog` + chi `WrapResponseWriter` | Structured logs with request ID, status, bytes, latency |
 | API testing | `curl`, `jq`, Go `testing` | Manual API verification and automated tests |
 | Containerization | Docker Compose | Local PostgreSQL environment |
-| Frontend | React + TypeScript | Future discovery catalog and sandbox |
 | Observability UI | Grafana | Future metrics and trace visualization |
 | MCP integration | Official Go MCP SDK | Future real MCP discovery and invocation |
 
@@ -300,6 +329,8 @@ Go MCP Gateway API
 
 ### Completed
 
+#### Backend (Phases 0-6)
+
 - Go module at `github.com/iashu2k/mcp-gateway/backend`
 - Docker Compose-managed PostgreSQL 16 database
 - Environment-based configuration
@@ -308,6 +339,7 @@ Go MCP Gateway API
 - Structured JSON application logs
 - Request logging with request ID, method, path, HTTP status, bytes written, and duration
 - HTTP request ID and timeout middleware
+- **CORS middleware for React UI integration**
 - Graceful HTTP shutdown
 - Version-controlled PostgreSQL schema migrations
 - MCP server registry with CRUD operations
@@ -352,6 +384,62 @@ Go MCP Gateway API
   - OpenTelemetry tracing initialized (stdout exporter for local dev)
 - Unit tests for server, tool, JWT, auth middleware, and invocation service behavior
 
+#### Frontend (Phase 7)
+
+- **Vite + React 18 + TypeScript project**
+- **Tailwind CSS v4 with Oxide engine** (no config file needed)
+- **JWT authentication with login page**
+  - Email/password form with validation
+  - Error handling for invalid credentials
+  - Automatic redirect to servers page on success
+  - Token stored in localStorage
+- **Protected routes with authentication context**
+  - `useAuth` hook for user state and token management
+  - Automatic user loading on app start
+  - 401 interceptor redirects to login
+  - Role-based navigation (admin sees Admin link)
+- **Server catalog with list and detail pages**
+  - Grid layout with server cards
+  - Status badges (active/inactive/unhealthy)
+  - Owner team display
+  - Empty state for no servers
+  - Server detail page with metadata and tools list
+- **Tool detail page with input schema viewer**
+  - Tool metadata display (title, description, risk level, enabled status)
+  - JSON schema viewer with syntax highlighting
+  - Risk level color coding (green/yellow/red)
+- **Invoke sandbox with JSON editor and live results**
+  - JSON textarea for arguments input
+  - Validation for invalid JSON
+  - Invoke button with loading state
+  - Result display with formatted JSON
+  - Error handling for invocation failures
+- **Invocation history page with filters**
+  - Table view with status icons (checkmark/X/clock)
+  - Filter by status (all, succeeded, failed, running)
+  - Pagination control (25/50/100 per page)
+  - Duration display in milliseconds
+  - Formatted timestamps
+  - Empty state for no invocations
+- **React Query for data fetching and caching**
+  - Automatic refetching on window focus
+  - Optimistic updates for mutations
+  - Loading and error states
+  - Query invalidation after mutations
+- **Responsive layout with Tailwind**
+  - Navigation bar with logo and links
+  - User info display with role badge
+  - Logout button
+  - Mobile-friendly design
+- **API client with auth token interceptor**
+  - Automatic Bearer token injection
+  - 401 error handling with redirect to login
+  - Base URL configuration via environment variable
+- **Error handling and loading states**
+  - Toast-style error messages
+  - Loading spinners for async operations
+  - Empty states for no data
+
 ### Not yet implemented
 
 - OAuth/OIDC identity-provider integration
@@ -363,7 +451,13 @@ Go MCP Gateway API
 - Grafana dashboards for metrics visualization
 - Jaeger/Tempo for trace visualization
 - Credential reference storage (GitHub token currently env-only)
-- React UI, CI/CD pipeline, production deployment
+- **Admin panel UI (server/tool CRUD forms, user management)**
+- **Metrics dashboard UI with charts (Prometheus data visualization)**
+- **Password change UI**
+- **Server/tool search and advanced filtering in UI**
+- **Invocation detail modal in history page**
+- **Export invocation history to CSV**
+- CI/CD pipeline, production deployment
 
 ---
 
@@ -378,8 +472,8 @@ Go MCP Gateway API
 | Phase 4 | Complete | Invocation Gateway | Policy-checked, schema-validated, audited mock invocations |
 | Phase 5 | Complete | Live GitHub Integration | Real GitHub REST executor with audit trail |
 | Phase 6 | Complete | Observability | Prometheus metrics, OpenTelemetry tracing, invocation history API |
-| Phase 7 | Next | React UI | Catalog, sandbox, history, and administration interface |
-| Phase 8 | Planned | Delivery and Polish | CI, containers, deployment, demo, documentation |
+| Phase 7 | Complete | React UI | Vite + React + TypeScript UI with auth, catalog, sandbox, history |
+| Phase 8 | Next | Delivery and Polish | Admin UI, metrics dashboard, CI, containers, deployment |
 
 ---
 
@@ -464,11 +558,51 @@ mcp-gateway/
 │   ├── go.mod
 │   └── go.sum
 │
-├── docs/
 ├── frontend/
+│   ├── src/
+│   │   ├── api/
+│   │   │   ├── client.ts
+│   │   │   └── services.ts
+│   │   │
+│   │   ├── components/
+│   │   │   └── Layout.tsx
+│   │   │
+│   │   ├── hooks/
+│   │   │   └── useAuth.tsx
+│   │   │
+│   │   ├── pages/
+│   │   │   ├── login/
+│   │   │   │   └── LoginPage.tsx
+│   │   │   ├── servers/
+│   │   │   │   ├── ServersPage.tsx
+│   │   │   │   └── ServerDetailPage.tsx
+│   │   │   ├── tools/
+│   │   │   │   └── ToolDetailPage.tsx
+│   │   │   ├── invocations/
+│   │   │   │   └── InvocationsPage.tsx
+│   │   │   └── admin/ (future)
+│   │   │
+│   │   ├── types/
+│   │   │   └── index.ts
+│   │   │
+│   │   ├── App.tsx
+│   │   ├── main.tsx
+│   │   ├── index.css
+│   │   └── vite-env.d.ts
+│   │
+│   ├── public/
+│   ├── .env
+│   ├── .env.example
+│   ├── index.html
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── vite.config.ts
+│   └── README.md
+│
+├── docs/
 ├── infra/
 ├── scripts/
-│   └── seed_users.sql.example
+│   └── seed_users.sql
 ├── .env.example
 ├── .gitignore
 ├── docker-compose.yml
@@ -476,6 +610,8 @@ mcp-gateway/
 ```
 
 ### Package responsibilities
+
+#### Backend
 
 | Package | Responsibility |
 |---|---|
@@ -485,17 +621,30 @@ mcp-gateway/
 | `internal/config` | Environment-variable loading and validation |
 | `internal/domain` | Core domain models, request models, constants, response structures |
 | `internal/executor` | Tool execution implementations: mock (deterministic) and GitHub (live REST) |
-| `internal/httpapi` | Routes, handlers, middleware, JSON decoding, responses, HTTP error mapping |
+| `internal/httpapi` | Routes, handlers, middleware, JSON decoding, responses, HTTP error mapping, CORS |
 | `internal/observability` | Prometheus metrics and OpenTelemetry tracing |
 | `internal/platform/database` | PostgreSQL connection-pool setup and health verification |
 | `internal/repository` | Parameterized SQL and PostgreSQL persistence operations |
 | `internal/service` | Business rules, validation, authentication, schema validation, invocation orchestration, history queries |
 | `migrations` | Ordered and versioned database schema evolution |
 
+#### Frontend
+
+| Directory | Responsibility |
+|---|---|
+| `src/api` | Axios client configuration and API service functions |
+| `src/components` | Reusable UI components (Layout, etc.) |
+| `src/hooks` | Custom React hooks (useAuth, etc.) |
+| `src/pages` | Page-level components organized by feature |
+| `src/types` | TypeScript type definitions |
+| `src/utils` | Utility functions (future) |
+
 Dependency direction:
 
 ```text
-HTTP Handler / Middleware
+React UI
+   ↓
+HTTP Handler / Middleware / CORS
            ↓
         Service
            ↓
@@ -513,6 +662,8 @@ HTTP Handler / Middleware
 Install:
 
 - Go 1.23 or newer
+- Node.js 18 or newer
+- npm or yarn
 - Docker Desktop or Docker Engine with Docker Compose
 - Git
 - `curl`
@@ -524,6 +675,8 @@ Verify:
 
 ```bash
 go version
+node --version
+npm --version
 docker --version
 docker compose version
 git --version
@@ -551,13 +704,15 @@ git clone https://github.com/iashu2k/mcp-gateway.git
 cd mcp-gateway
 ```
 
-### Create local configuration
+### Backend setup
+
+#### Create local configuration
 
 ```bash
 cp .env.example .env
 ```
 
-### Configure JWT settings
+#### Configure JWT settings
 
 ```bash
 openssl rand -base64 48
@@ -571,7 +726,7 @@ JWT_ISSUER=mcp-gateway
 JWT_TTL_MINUTES=60
 ```
 
-### Configure GitHub integration (optional)
+#### Configure GitHub integration (optional)
 
 For public repositories, you can run unauthenticated (60 requests/hour). For higher rate limits or private repos, create a fine-grained personal access token with only "Issues: Read" permission:
 
@@ -585,14 +740,14 @@ Leave empty for unauthenticated public access:
 GITHUB_TOKEN=
 ```
 
-### Start PostgreSQL
+#### Start PostgreSQL
 
 ```bash
 docker compose up -d postgres
 docker compose ps
 ```
 
-### Apply migrations
+#### Apply migrations
 
 ```bash
 set -a
@@ -603,23 +758,52 @@ migrate -path backend/migrations -database "$DATABASE_URL" up
 migrate -path backend/migrations -database "$DATABASE_URL" version
 ```
 
-Expected after Phase 6:
+Expected after Phase 7:
 
 ```text
 4
 ```
 
-### Seed local users
+#### Seed local users
 
 ```bash
 cd backend
-go run ./cmd/passwordhash "AdminPass123!"
-go run ./cmd/passwordhash "DeveloperPass123!"
-go run ./cmd/passwordhash "ViewerPass123!"
+go run ./cmd/passwordhash "AdminPass123"
+go run ./cmd/passwordhash "DeveloperPass123"
+go run ./cmd/passwordhash "ViewerPass123"
 cd ..
 
-cp scripts/seed_users.sql.example scripts/seed_users.sql
-# Replace the placeholder hashes in scripts/seed_users.sql
+# Create seed file with the generated hashes
+cat > scripts/seed_users.sql << 'EOF'
+INSERT INTO users (id, email, display_name, password_hash, role, active)
+VALUES
+  (
+    'f8f3ace3-3c02-4ca3-86c0-11517ae1bee3',
+    'admin@mcp-gateway.local',
+    'Gateway Admin',
+    '$2a$10$GS/jgCP2fk9wmiD6x47io.rl79UHog1/5fP1UHhfa5QiipaHFTo6a',
+    'admin',
+    true
+  ),
+  (
+    '265d8f73-0221-45c5-9890-dcaa1dfc62ee',
+    'developer@mcp-gateway.local',
+    'Gateway Developer',
+    '$2a$10$I0osJrIi/SYP2v16tcyC1etDQjFRUmcCSqNn5T0vTj7TDB97WVGGG',
+    'developer',
+    true
+  ),
+  (
+    '28a6ffda-9a76-4a7d-90fd-8aa1670b1660',
+    'viewer@mcp-gateway.local',
+    'Gateway Viewer',
+    '$2a$10$gzFskJR2pzBNWWyE5a4ghukZRc.M36I52Mmn4bpjrVGjr6Vf62vCC',
+    'viewer',
+    true
+  )
+ON CONFLICT (email) DO UPDATE
+SET password_hash = EXCLUDED.password_hash;
+EOF
 
 psql "$DATABASE_URL" -f scripts/seed_users.sql
 ```
@@ -628,13 +812,34 @@ Local development users:
 
 | Email | Password | Role |
 |---|---|---|
-| `admin@mcp-gateway.local` | `AdminPass123!` | `admin` |
-| `developer@mcp-gateway.local` | `DeveloperPass123!` | `developer` |
-| `viewer@mcp-gateway.local` | `ViewerPass123!` | `viewer` |
+| `admin@mcp-gateway.local` | `AdminPass123` | `admin` |
+| `developer@mcp-gateway.local` | `DeveloperPass123` | `developer` |
+| `viewer@mcp-gateway.local` | `ViewerPass123` | `viewer` |
 
 > Local development credentials only. Never use them in any deployed environment.
 
-### Start the API
+### Frontend setup
+
+#### Install dependencies
+
+```bash
+cd frontend
+npm install
+```
+
+#### Create environment config
+
+```bash
+cp .env.example .env
+```
+
+Edit `frontend/.env`:
+
+```
+VITE_API_BASE_URL=http://localhost:8080
+```
+
+### Start the backend
 
 From the repository root:
 
@@ -649,11 +854,24 @@ cd backend
 go run ./cmd/api
 ```
 
-The service runs at `http://localhost:8080`.
+The API runs at `http://localhost:8080`.
+
+### Start the frontend
+
+In a separate terminal:
+
+```bash
+cd frontend
+npm run dev
+```
+
+The UI runs at `http://localhost:5173`.
 
 ---
 
 ## Environment Variables
+
+### Backend
 
 ```dotenv
 APP_ENV=development
@@ -684,7 +902,17 @@ GITHUB_TOKEN=
 | `JWT_TTL_MINUTES` | Yes | Access-token lifetime in minutes |
 | `GITHUB_TOKEN` | No | GitHub personal access token (empty = unauthenticated public access) |
 
-`.env` and `scripts/seed_users.sql` are local-only files and must not be committed.
+### Frontend
+
+```
+VITE_API_BASE_URL=http://localhost:8080
+```
+
+| Variable | Required | Description |
+|---|---:|---|
+| `VITE_API_BASE_URL` | Yes | Base URL for the Go API |
+
+`.env` files in both `backend/` and `frontend/` are local-only and must not be committed.
 
 ---
 
@@ -733,31 +961,39 @@ psql "$DATABASE_URL" -c "SELECT id, status, duration_ms FROM tool_invocations OR
 | `viewer` | Yes | No | No | No |
 | Unauthenticated | No | No | No | No |
 
-### Login
+### Login (API)
 
 ```bash
 curl -s -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "admin@mcp-gateway.local",
-    "password": "AdminPass123!"
+    "password": "AdminPass123"
   }' | jq
 ```
 
-### Save tokens
+### Login (UI)
+
+1. Navigate to `http://localhost:5173`
+2. You'll be redirected to `/login`
+3. Enter `admin@mcp-gateway.local` / `AdminPass123`
+4. Click "Sign in"
+5. You'll be redirected to the servers page
+
+### Save tokens (API)
 
 ```bash
 export ADMIN_TOKEN="$(
   curl -s -X POST http://localhost:8080/api/v1/auth/login \
     -H "Content-Type: application/json" \
-    -d '{"email":"admin@mcp-gateway.local","password":"AdminPass123!"}' \
+    -d '{"email":"admin@mcp-gateway.local","password":"AdminPass123"}' \
     | jq -r '.accessToken'
 )"
 
 export DEVELOPER_TOKEN="$(
   curl -s -X POST http://localhost:8080/api/v1/auth/login \
     -H "Content-Type: application/json" \
-    -d '{"email":"developer@mcp-gateway.local","password":"DeveloperPass123!"}' \
+    -d '{"email":"developer@mcp-gateway.local","password":"DeveloperPass123"}' \
     | jq -r '.accessToken'
 )"
 ```
@@ -1016,12 +1252,7 @@ The gateway exposes metrics at `/metrics` in Prometheus exposition format. Metri
 **Database:**
 - `mcp_gateway_database_connections_open` — Number of open database connections (gauge, updated every 15s)
 
-Path normalization replaces UUIDs with `:id` to avoid high cardinality:
-
-```text
-/api/v1/servers/c3b00a6e-78b3-4e8d-b40f-dc7e6149625d/tools/2d81df9b-b69a-41a1-9fe9-3c1535ce8b62/invoke
-→ /api/v1/servers/:id/tools/:id/invoke
-```
+Path normalization replaces UUIDs with `:id` to avoid high cardinality.
 
 ### Invocation history API
 
@@ -1032,123 +1263,226 @@ GET /api/v1/invocations?serverId={uuid}&toolId={uuid}&status=succeeded&limit=50&
 Authorization: Bearer <access-token>
 ```
 
-**Query parameters:**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `serverId` | UUID | Filter by server ID (optional) |
-| `toolId` | UUID | Filter by tool ID (optional) |
-| `status` | string | Filter by status: `running`, `succeeded`, `failed`, `denied` (optional) |
-| `limit` | integer | Max results (default 50, max 100) |
-| `offset` | integer | Pagination offset (default 0) |
-
 **Role-based access:**
 
 - **Admin**: Sees all invocations from all users
 - **Developer**: Sees only their own invocations
 - **Viewer**: No access to history endpoints
 
-**Get specific invocation:**
-
-```http
-GET /api/v1/invocations/{invocationID}
-Authorization: Bearer <access-token>
-```
-
-Non-admin users can only view their own invocations.
-
 ### OpenTelemetry tracing
 
 The gateway initializes an OpenTelemetry tracer provider with a stdout exporter for local development. In production, this can be swapped for an OTLP exporter to send traces to Jaeger, Tempo, or other backends.
 
-Traces are created for:
-- HTTP requests (via middleware)
-- Tool invocations (span from policy check to execution)
-- Upstream API calls (GitHub requests)
+---
 
-### Verified metrics output
+## Phase 7: React UI
 
-After making several invocations:
+**Status:** Complete
 
-```bash
-curl -s http://localhost:8080/metrics | grep mcp_gateway
-```
+### Goal
 
-Expected output:
+Build a modern, responsive web interface for discovering servers, browsing tools, invoking them in a sandbox, and viewing invocation history. The UI uses Vite for fast development, React for component-based architecture, TypeScript for type safety, and Tailwind CSS v4 for styling.
+
+### Technology choices
+
+**Vite:**
+- Lightning-fast HMR (Hot Module Replacement)
+- Optimized production builds with Rollup
+- Native ES modules support
+- Built-in TypeScript support
+- Plugin ecosystem
+
+**React 18 + TypeScript:**
+- Component-based architecture
+- Type safety for props, state, and API responses
+- Rich ecosystem (React Router, React Query, etc.)
+- Excellent developer experience
+
+**Tailwind CSS v4:**
+- Utility-first CSS framework
+- Oxide engine (Rust-based) for faster builds
+- No config file needed (auto-detects content)
+- Smaller bundle size with automatic tree-shaking
+- New `@import "tailwindcss"` syntax
+
+**React Query (TanStack Query):**
+- Automatic caching and synchronization
+- Background refetching
+- Optimistic updates
+- Loading and error states
+- Query invalidation
+
+**React Router v6:**
+- Declarative routing
+- Protected routes with authentication
+- Nested routes with layouts
+- URL parameter support
+
+### Architecture
 
 ```text
-mcp_gateway_http_requests_total{method="POST",path="/api/v1/servers/:id/tools/:id/invoke",status="200"} 5
-mcp_gateway_http_request_duration_seconds_bucket{method="POST",path="/api/v1/servers/:id/tools/:id/invoke",le="0.5"} 5
-mcp_gateway_invocations_total{server="github",tool="list_issues",status="succeeded"} 3
-mcp_gateway_invocations_total{server="mock-tools",tool="echo",status="succeeded"} 2
-mcp_gateway_invocation_duration_seconds_bucket{server="github",tool="list_issues",le="0.5"} 3
-mcp_gateway_upstream_requests_total{service="github",status="success"} 3
+React App
+├── Authentication Context
+│   ├── JWT token management (localStorage)
+│   ├── User state (role, email, displayName)
+│   ├── Protected routes wrapper
+│   └── 401 interceptor → redirect to login
+│
+├── API Client (Axios)
+│   ├── Base URL from environment variable
+│   ├── Auth token interceptor (adds Bearer token)
+│   ├── Error interceptor (handles 401)
+│   └── Type-safe service functions
+│
+├── React Query
+│   ├── QueryClient with default options
+│   ├── Queries: servers, tools, invocations
+│   ├── Mutations: login, invoke tool
+│   └── Automatic refetching and caching
+│
+├── Layout Component
+│   ├── Navigation bar with logo
+│   ├── Links: Servers, History, Admin (role-based)
+│   ├── User info display
+│   └── Logout button
+│
+└── Pages
+    ├── LoginPage
+    │   ├── Email/password form
+    │   ├── Error display
+    │   └── Loading state
+    │
+    ├── ServersPage
+    │   ├── Grid layout with server cards
+    │   ├── Status badges
+    │   ├── Empty state
+    │   └── "Add Server" button (admin only)
+    │
+    ├── ServerDetailPage
+    │   ├── Server metadata display
+    │   ├── Tools list with risk level badges
+    │   ├── Enabled/disabled status
+    │   └── Back navigation
+    │
+    ├── ToolDetailPage
+    │   ├── Tool metadata display
+    │   ├── JSON schema viewer
+    │   ├── Invoke sandbox
+    │   │   ├── JSON textarea for arguments
+    │   │   ├── Invoke button with loading state
+    │   │   └── Result display
+    │   └── Error handling
+    │
+    └── InvocationsPage
+        ├── Table with status icons
+        ├── Filter by status
+        ├── Pagination control
+        ├── Duration display
+        └── Formatted timestamps
 ```
 
-### Verified invocation history
+### Key features
 
-```bash
-# Admin sees all invocations
-curl -s "http://localhost:8080/api/v1/invocations?limit=5" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
+**Authentication flow:**
+1. User visits `http://localhost:5173`
+2. Redirected to `/login` if not authenticated
+3. Enters email/password
+4. API returns JWT token
+5. Token stored in localStorage
+6. Redirected to `/servers`
+7. All subsequent requests include Bearer token
+8. On 401 error, redirected back to `/login`
 
-# Filter by server
-curl -s "http://localhost:8080/api/v1/invocations?serverId=$SERVER_ID&status=succeeded" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
+**Server discovery:**
+- Grid layout with responsive cards
+- Server name, description, status, owner team
+- Click to view server detail page
+- Admin sees "Add Server" button
 
-# Developer sees only their own
-curl -s "http://localhost:8080/api/v1/invocations?limit=10" \
-  -H "Authorization: Bearer $DEVELOPER_TOKEN" | jq
+**Tool invocation:**
+- Tool detail page shows metadata and input schema
+- JSON textarea for entering arguments
+- "Invoke Tool" button triggers mutation
+- Result displayed in formatted JSON
+- Loading state during invocation
+- Error handling for failures
+
+**Invocation history:**
+- Table view with all invocations
+- Status icons (checkmark for success, X for failure, clock for running)
+- Filter by status dropdown
+- Pagination control
+- Duration in milliseconds
+- Formatted timestamps
+
+**CORS configuration:**
+- Backend allows requests from `http://localhost:5173`
+- Preflight OPTIONS requests return 200 OK
+- Credentials included in requests
+
+### Verified user flows
+
+**1. Login:**
+```
+Navigate to http://localhost:5173
+→ Redirected to /login
+→ Enter admin@mcp-gateway.local / AdminPass123
+→ Click "Sign in"
+→ Redirected to /servers
 ```
 
-Response:
-
-```json
-{
-  "count": 5,
-  "data": [
-    {
-      "id": "cb112ed5-92fc-488a-80d6-e60be4af1e7f",
-      "serverId": "c3b00a6e-78b3-4e8d-b40f-dc7e6149625d",
-      "toolId": "2d81df9b-b69a-41a1-9fe9-3c1535ce8b62",
-      "userId": "265d8f73-0221-45c5-9890-dcaa1dfc62ee",
-      "status": "succeeded",
-      "requestArguments": {
-        "owner": "golang",
-        "repo": "go",
-        "state": "open",
-        "per_page": 5
-      },
-      "responsePayload": {
-        "count": 4,
-        "issues": [...]
-      },
-      "durationMs": 404,
-      "createdAt": "2026-08-03T17:46:38.835182-04:00",
-      "completedAt": "2026-08-03T17:46:38.835182-04:00"
-    }
-  ]
-}
+**2. Browse servers:**
+```
+View server cards in grid layout
+→ See GitHub and mock-tools servers
+→ Click on GitHub server
+→ View server detail page with tools list
 ```
 
-### Phase 6 acceptance criteria
+**3. Invoke tool:**
+```
+Click on "List GitHub Issues" tool
+→ View tool detail page
+→ Enter JSON arguments: {"owner": "golang", "repo": "go", "per_page": 3}
+→ Click "Invoke Tool"
+→ See loading state
+→ View result with real GitHub issues
+```
 
-- [x] Prometheus metrics endpoint at `/metrics`
-- [x] HTTP request metrics (count, duration) by method/path/status
-- [x] Invocation metrics (count, duration) by server/tool/status
-- [x] Upstream API metrics (GitHub requests by success/error)
-- [x] Database connection pool metrics
-- [x] Path normalization to avoid high cardinality
-- [x] Invocation history list endpoint with filtering (server, tool, status)
-- [x] Invocation history detail endpoint
-- [x] Pagination support (limit/offset, max 100)
-- [x] Role-based history access (admin sees all, developer sees own)
-- [x] OpenTelemetry tracing initialized (stdout exporter)
-- [x] `go test ./...` and `go vet ./...` pass
+**4. View history:**
+```
+Click "History" in navigation
+→ View invocation history table
+→ Filter by "succeeded" status
+→ See duration and timestamps
+→ Verify role-based access (developer sees only own invocations)
+```
+
+### Phase 7 acceptance criteria
+
+- [x] Vite + React + TypeScript project initialized
+- [x] Tailwind CSS v4 configured (no config file needed)
+- [x] JWT authentication with login page
+- [x] Protected routes with auth context
+- [x] Server catalog with list and detail pages
+- [x] Tool detail page with input schema viewer
+- [x] Invoke sandbox with JSON editor and live results
+- [x] Invocation history page with filters
+- [x] React Query for data fetching and caching
+- [x] Responsive layout with Tailwind
+- [x] API client with auth token interceptor
+- [x] Error handling and loading states
+- [x] CORS middleware on backend
+- [x] Role-based navigation (admin sees Admin link)
+- [x] Empty states for no data
+- [x] Formatted timestamps with date-fns
+- [x] Icons with Lucide React
 
 ---
 
 ## Validation and Testing
+
+### Backend
 
 ```bash
 cd backend
@@ -1159,97 +1493,90 @@ go test ./...
 go vet ./...
 ```
 
-### Metrics smoke test
+### Frontend
 
 ```bash
-# Make a few invocations
-curl -s -X POST \
-  "http://localhost:8080/api/v1/servers/$SERVER_ID/tools/$TOOL_ID/invoke" \
-  -H "Authorization: Bearer $DEVELOPER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"arguments": {"owner": "golang", "repo": "go", "per_page": 3}}' | jq
+cd frontend
 
-# Check metrics
-curl -s http://localhost:8080/metrics | grep mcp_gateway
+npm run build
+npm run lint
 ```
 
-### Invocation history smoke test
+### Integration test
 
-```bash
-# List recent invocations
-curl -s "http://localhost:8080/api/v1/invocations?limit=5" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
-
-# Filter by status
-curl -s "http://localhost:8080/api/v1/invocations?status=failed" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
-```
+1. Start backend: `go run ./backend/cmd/api`
+2. Start frontend: `cd frontend && npm run dev`
+3. Navigate to `http://localhost:5173`
+4. Login with `admin@mcp-gateway.local` / `AdminPass123`
+5. Browse servers
+6. Invoke a tool
+7. View invocation history
 
 ---
 
 ## Design Decisions
 
-### Why Prometheus for metrics
+### Why Vite over Create React App
 
-Prometheus is the de facto standard for metrics in cloud-native systems:
+Vite provides:
 
-- Pull-based model (gateway exposes `/metrics`, Prometheus scrapes)
-- Rich query language (PromQL) for aggregations
-- Wide ecosystem (Grafana, Alertmanager, etc.)
-- Go client library is mature and well-maintained
+- **Faster dev server startup** — Native ES modules, no bundling in dev
+- **Instant HMR** — Changes reflect immediately without full reload
+- **Optimized builds** — Rollup-based production builds with code splitting
+- **Modern tooling** — Built-in TypeScript, JSX, CSS support
+- **Smaller bundle size** — Tree-shaking and minification out of the box
 
-Alternative approaches considered:
+Create React App is deprecated and slower for modern development.
 
-- **StatsD/DataDog:** Requires external agent, adds operational complexity
-- **Custom metrics endpoint:** Reinvents the wheel, lacks ecosystem
+### Why Tailwind CSS v4
 
-### Why path normalization for metrics
+Tailwind v4 offers:
 
-High-cardinality metrics (unique label combinations) can cause performance issues in Prometheus. By replacing UUIDs with `:id`, we reduce the number of unique time series:
+- **No config file** — Auto-detects content files
+- **Faster builds** — Oxide engine (Rust-based)
+- **Smaller bundle** — Automatic tree-shaking
+- **Simpler setup** — Just `@import "tailwindcss"` in CSS
+- **Better DX** — Fewer configuration files to manage
 
-```text
-Without normalization:
-mcp_gateway_http_requests_total{path="/api/v1/servers/c3b00a6e.../invoke",status="200"} 1
-mcp_gateway_http_requests_total{path="/api/v1/servers/a1b2c3d4.../invoke",status="200"} 1
-# ... thousands of unique paths
+The utility-first approach keeps styling co-located with components.
 
-With normalization:
-mcp_gateway_http_requests_total{path="/api/v1/servers/:id/tools/:id/invoke",status="200"} 5000
-```
+### Why React Query
 
-This keeps Prometheus memory usage reasonable and queries fast.
+React Query solves common data fetching problems:
 
-### Why role-based history access
+- **Caching** — Automatic caching with configurable stale time
+- **Background refetching** — Keeps data fresh automatically
+- **Optimistic updates** — UI updates immediately, rolls back on error
+- **Loading/error states** — Built-in state management
+- **Query invalidation** — Refetch related queries after mutations
 
-Invocation history contains sensitive information:
+Without React Query, you'd need to manage caching, loading states, and synchronization manually.
 
-- What tools were invoked
-- What arguments were passed
-- What results were returned
-- When invocations occurred
+### Why CORS over Vite proxy
 
-Restricting non-admin users to their own invocations prevents information leakage:
+CORS middleware is more explicit and works in production:
 
-- Developers can't see what other developers are doing
-- Viewers can't access any history (they can't invoke tools anyway)
-- Admins have full visibility for debugging and auditing
+- **Production-ready** — Works when frontend and backend are deployed separately
+- **Explicit configuration** — Clear which origins are allowed
+- **Standard approach** — Industry-standard for cross-origin requests
 
-### Why OpenTelemetry for tracing
+Vite proxy is convenient for local development but doesn't solve production CORS.
 
-OpenTelemetry is the CNCF standard for observability:
+### Why localStorage for JWT token
 
-- Vendor-neutral (works with Jaeger, Tempo, Zipkin, etc.)
-- Automatic instrumentation via middleware
-- Context propagation across service boundaries
-- Future-proof (can add spans to any operation)
+localStorage is simple and works for this use case:
 
-The stdout exporter is used for local development because it requires no external services. In production, swap for OTLP exporter to send traces to a backend.
+- **Simple API** — `localStorage.getItem/setItem`
+- **Persistent** — Survives page refreshes
+- **Synchronous** — No async complexity
+
+For production with higher security requirements, consider httpOnly cookies or session storage.
 
 ---
 
 ## Known Limitations
 
-Intentional at the end of Phase 6:
+Intentional at the end of Phase 7:
 
 - Only two GitHub tools (`list_issues`, `search_repositories`); no `get_issue`, `list_pull_requests`, etc.
 - GitHub token stored in environment variable, not a credential reference store
@@ -1261,129 +1588,194 @@ Intentional at the end of Phase 6:
 - No alerting (Prometheus metrics are collected but no alert rules defined)
 - Schema compilation happens per request (no cache)
 - No OAuth/OIDC, refresh tokens, or token revocation
-- No React UI, CI/CD, or deployment
+- **Admin panel UI not implemented (server/tool CRUD forms)**
+- **Metrics dashboard UI not implemented (Prometheus data visualization)**
+- **No password change UI**
+- **No server/tool search in UI**
+- **No invocation detail modal in history page**
+- **No export to CSV in history page**
+- **JWT token stored in localStorage (vulnerable to XSS)**
+- No CI/CD pipeline, production deployment
 - No MCP protocol transport (stdio/SSE/streamable HTTP); all integrations are direct REST API calls
 
 ---
 
 ## Planned Phases
 
-### Phase 7: React UI (Next)
+### Phase 8: Delivery and Polish (Next)
 
-Build the discovery and sandbox interface:
+Complete the production-ready features:
 
-- MCP server catalog with search and filtering
-- Tool detail pages with input schema viewer
-- JSON invocation sandbox with live results
-- **Invocation history page with filtering and export**
-- **Metrics dashboard using Prometheus data**
-- Admin management (users, servers, tools)
-- Observability dashboard (metrics, traces, health)
+- **Admin panel UI**
+  - Server CRUD forms (create, edit, delete)
+  - Tool CRUD forms with JSON schema editor
+  - User management (list, create, edit roles)
+  - Password change UI
 
-### Phase 8: Delivery and Polish
+- **Metrics dashboard UI**
+  - Charts for invocation counts by server/tool
+  - Latency histograms
+  - Error rate trends
+  - Database connection pool metrics
+  - Integration with Prometheus data
 
-Prepare for production deployment:
+- **Enhanced history page**
+  - Invocation detail modal with full request/response
+  - Export to CSV
+  - Advanced filtering (date range, user, server, tool)
+  - Pagination with page numbers
 
-- GitHub Actions CI (test, lint, build)
-- Backend and frontend Dockerfiles
-- Integration tests using Testcontainers
-- OpenAPI documentation
-- **Grafana dashboards for metrics visualization**
-- **Jaeger/Tempo for trace visualization**
-- **Alertmanager for alerting rules**
-- Cloud deployment (AWS/GCP/Azure)
-- Architecture decision records
-- Demo video and screenshots
-- Security and operations documentation
+- **Search and filtering**
+  - Server catalog search by name/description
+  - Tool search within server detail page
+  - Filter by risk level, enabled status
+
+- **CI/CD pipeline**
+  - GitHub Actions workflow
+  - Automated tests (backend + frontend)
+  - Linting and formatting checks
+  - Docker image builds
+  - Deployment to staging/production
+
+- **Docker images**
+  - Backend Dockerfile (multi-stage build)
+  - Frontend Dockerfile (nginx for static files)
+  - Docker Compose for full stack
+  - Production-ready configuration
+
+- **Documentation**
+  - OpenAPI/Swagger spec for API
+  - Architecture decision records
+  - Deployment guide
+  - Security best practices
+  - Demo video and screenshots
+
+- **Security hardening**
+  - Move JWT token to httpOnly cookie
+  - Add CSRF protection
+  - Rate limiting on API endpoints
+  - Input sanitization
+  - Security headers (CSP, X-Frame-Options, etc.)
+
+- **Production deployment**
+  - Cloud platform setup (AWS/GCP/Azure)
+  - Environment-specific configuration
+  - Secrets management
+  - Monitoring and alerting
+  - Backup and disaster recovery
 
 ---
 
 ## Troubleshooting
 
-### Metrics endpoint returns empty
+### CORS errors in browser console
 
-Make sure you've made at least one request after starting the server. Metrics are initialized with zero values and only appear after the first observation.
+**Symptom:** `Access to fetch at 'http://localhost:8080/api/v1/...' from origin 'http://localhost:5173' has been blocked by CORS policy`
 
-### Invocation history returns empty for developer
+**Fix:** Ensure CORS middleware is added to `router.go` **before** other middleware:
 
-Developers can only see their own invocations. If a developer hasn't invoked any tools, the response will be `{"count":0,"data":[]}`.
-
-### Traces not appearing in stdout
-
-The stdout exporter batches traces. You may need to wait a few seconds or make multiple requests before traces appear. For immediate output, use `sdktrace.WithSyncer(exporter)` instead of `WithBatcher`.
-
-### GitHub API returns 403 rate limit exceeded
-
-You've exceeded the unauthenticated limit (60 requests/hour). Either:
-
-1. Wait for the rate limit to reset (check `X-RateLimit-Reset` header in the error)
-2. Create a fine-grained personal access token and set `GITHUB_TOKEN` in `.env`
-
-### Route returns 404 for tool endpoints
-
-Trailing-slash mismatch. If routes are registered as `/{serverID}/tools/`, you must call `.../tools/` (with trailing slash). Alternatively, add `middleware.StripSlashes` to the router and register routes without trailing slashes.
-
-### `DATABASE_URL is required` when running from `backend/`
-
-The `.env` file is at the repository root. Either:
-
-1. Run from the root: `go run ./backend/cmd/api`
-2. Update `main.go` to load `../.env`:
-   ```go
-   _ = godotenv.Load()
-   _ = godotenv.Load("../.env")
-   ```
-
-### Reset all server and tool records (keeps users)
-
-```bash
-psql "$DATABASE_URL" -c "TRUNCATE TABLE mcp_tools, mcp_servers CASCADE;"
+```go
+router.Use(cors.Handler(cors.Options{
+	AllowedOrigins:   []string{"http://localhost:5173"},
+	AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+	AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+	AllowCredentials: true,
+}))
 ```
 
-Note: existing `tool_invocations` rows referencing those rows will block the truncate because of `RESTRICT`. Remove them first if needed:
+### Login returns 401 invalid_credentials
+
+**Symptom:** `{"error":"invalid_credentials","message":"email or password is incorrect"}`
+
+**Fix:** Verify the password hash in the database matches the password:
 
 ```bash
-psql "$DATABASE_URL" -c "TRUNCATE TABLE tool_invocations, mcp_tools, mcp_servers CASCADE;"
+# Generate new hash
+cd backend
+go run ./cmd/passwordhash "AdminPass123"
+
+# Update database (escape $ with \$)
+psql "$DATABASE_URL" -c "
+  UPDATE users
+  SET password_hash = '\$2a\$10\$GS/jgCP2fk9wmiD6x47io.rl79UHog1/5fP1UHhfa5QiipaHFTo6a'
+  WHERE email = 'admin@mcp-gateway.local';
+"
 ```
 
-### Full local reset
+### Frontend can't connect to backend
+
+**Symptom:** Network error or `ERR_CONNECTION_REFUSED`
+
+**Fix:** Ensure backend is running and `VITE_API_BASE_URL` is correct:
 
 ```bash
-docker compose down -v
-docker compose up -d postgres
-set -a; source .env; set +a
-migrate -path backend/migrations -database "$DATABASE_URL" up
-# Re-seed users
+# Check backend is running
+curl http://localhost:8080/health
+
+# Check frontend .env
+cat frontend/.env
+# Should contain: VITE_API_BASE_URL=http://localhost:8080
 ```
+
+### Tailwind classes not working
+
+**Symptom:** No styling applied, components look unstyled
+
+**Fix:** Ensure `@import "tailwindcss"` is in `src/index.css` and the file is imported in `main.tsx`:
+
+```typescript
+// src/main.tsx
+import './index.css'
+```
+
+### 401 redirect loop
+
+**Symptom:** Constantly redirected to login page
+
+**Fix:** Clear localStorage and login again:
+
+```javascript
+// In browser console
+localStorage.clear()
+```
+
+Then login again with correct credentials.
 
 ---
 
 ## Contributing Workflow
 
 ```bash
-git checkout -b feat/react-ui
+git checkout -b feat/admin-panel
 
+# Backend changes
 cd backend
 gofmt -w .
 go mod tidy
 go test ./...
 go vet ./...
 
+# Frontend changes
+cd ../frontend
+npm run lint
+npm run build
+
 cd ..
 git add .
-git commit -m "feat: add react ui for server catalog and invocation sandbox"
-git push -u origin feat/react-ui
+git commit -m "feat: add admin panel for server and tool management"
+git push -u origin feat/admin-panel
 ```
 
 Suggested commit convention:
 
 ```text
-feat: add observability with prometheus metrics
 feat: add react ui for server catalog
+feat: add admin panel for server crud
+feat: add metrics dashboard with charts
 fix: validate tool input schema
 test: cover invalid JWT and role checks
-docs: document phase 6 observability
-chore: configure Docker Compose PostgreSQL
+docs: document phase 7 react ui
+chore: configure vite and tailwind
 ```
 
 ---
@@ -1398,36 +1790,74 @@ Phase 3: Complete
 Phase 4: Complete
 Phase 5: Complete
 Phase 6: Complete
-Phase 7: Ready to begin — React UI
+Phase 7: Complete
+Phase 8: Ready to begin — Delivery and Polish
 ```
 
-The next milestone is the **React UI**: a web interface for discovering servers, browsing tools, invoking them in a sandbox, viewing invocation history, and visualizing metrics.
+The next milestone is **Delivery and Polish**: admin panel UI, metrics dashboard, CI/CD pipeline, Docker images, and production deployment.
 
 ---
 
-## Demo: Observability in Action
+## Demo: Full Stack Walkthrough
 
-Here's a complete walkthrough of Phase 6 observability features:
+Here's a complete end-to-end walkthrough of the system:
 
-### 1. Make several invocations
+### 1. Start the stack
 
 ```bash
-# GitHub invocation
-curl -s -X POST \
-  "http://localhost:8080/api/v1/servers/$GITHUB_SERVER_ID/tools/$LIST_ISSUES_TOOL_ID/invoke" \
-  -H "Authorization: Bearer $DEVELOPER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"arguments": {"owner": "golang", "repo": "go", "per_page": 3}}' | jq
+# Terminal 1: PostgreSQL
+docker compose up -d postgres
 
-# Mock invocation
-curl -s -X POST \
-  "http://localhost:8080/api/v1/servers/$MOCK_SERVER_ID/tools/$ECHO_TOOL_ID/invoke" \
-  -H "Authorization: Bearer $DEVELOPER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"arguments": {"message": "test"}}' | jq
+# Terminal 2: Backend
+cd backend
+go run ./cmd/api
+
+# Terminal 3: Frontend
+cd frontend
+npm run dev
 ```
 
-### 2. Check Prometheus metrics
+### 2. Login via UI
+
+1. Navigate to `http://localhost:5173`
+2. Redirected to `/login`
+3. Enter `admin@mcp-gateway.local` / `AdminPass123`
+4. Click "Sign in"
+5. Redirected to `/servers`
+
+### 3. Browse servers
+
+1. See grid of server cards (GitHub, mock-tools)
+2. Click on "github" server
+3. View server detail page with tools list
+4. See "List GitHub Issues" and "Search Repositories" tools
+
+### 4. Invoke a tool
+
+1. Click on "List GitHub Issues"
+2. View tool detail page with input schema
+3. Enter arguments in JSON editor:
+   ```json
+   {
+     "owner": "golang",
+     "repo": "go",
+     "state": "open",
+     "per_page": 3
+   }
+   ```
+4. Click "Invoke Tool"
+5. See loading state
+6. View result with real GitHub issues
+
+### 5. View invocation history
+
+1. Click "History" in navigation
+2. See table with all invocations
+3. Filter by "succeeded" status
+4. See duration (e.g., 404ms)
+5. See formatted timestamp
+
+### 6. Check metrics
 
 ```bash
 curl -s http://localhost:8080/metrics | grep mcp_gateway_invocations_total
@@ -1437,35 +1867,24 @@ Output:
 
 ```text
 mcp_gateway_invocations_total{server="github",tool="list_issues",status="succeeded"} 1
-mcp_gateway_invocations_total{server="mock-tools",tool="echo",status="succeeded"} 1
 ```
 
-### 3. Query invocation history
+### 7. Verify audit trail
 
 ```bash
-# All invocations (admin)
-curl -s "http://localhost:8080/api/v1/invocations?limit=10" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.data[] | {id, status, tool: .toolId, duration: .durationMs}'
-
-# Only GitHub invocations
-curl -s "http://localhost:8080/api/v1/invocations?serverId=$GITHUB_SERVER_ID" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.data[] | {id, status, duration: .durationMs}'
-
-# Only failed invocations
-curl -s "http://localhost:8080/api/v1/invocations?status=failed" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.data[] | {id, error: .errorMessage}'
+psql "$DATABASE_URL" -c "
+  SELECT 
+    ti.status,
+    s.name AS server,
+    t.name AS tool,
+    ti.duration_ms,
+    ti.created_at
+  FROM tool_invocations ti
+  JOIN mcp_servers s ON s.id = ti.server_id
+  JOIN mcp_tools t ON t.id = ti.tool_id
+  ORDER BY ti.created_at DESC
+  LIMIT 5;
+"
 ```
 
-### 4. Verify role-based access
-
-```bash
-# Developer sees only their own invocations
-curl -s "http://localhost:8080/api/v1/invocations?limit=10" \
-  -H "Authorization: Bearer $DEVELOPER_TOKEN" | jq '.count'
-
-# Compare with admin count (should be higher if other users invoked tools)
-curl -s "http://localhost:8080/api/v1/invocations?limit=10" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.count'
-```
-
-This demonstrates the complete observability stack: metrics for monitoring, history API for querying, and role-based access control for security.
+This demonstrates the complete flow: UI → API → policy → execution → audit → metrics — all working end-to-end with a modern React interface.
