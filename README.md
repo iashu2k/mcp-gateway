@@ -4,7 +4,7 @@ A self-hosted MCP Gateway for centrally registering, discovering, governing, and
 
 The project is inspired by the idea of an internal “USB-C for AI agents”: a unified platform where developers and AI agents can discover approved Model Context Protocol (MCP) servers, inspect their tools, invoke approved capabilities through centralized controls, and obtain audit-ready execution history.
 
-> **Current status:** Phase 3 complete — the MCP Server Registry, MCP Tool Catalog, JWT authentication, and role-based access control are implemented and validated locally.
+> **Current status:** Phase 4 complete — Server Registry, Tool Catalog, JWT authentication, RBAC, and a policy-controlled, audited tool-invocation gateway are implemented and verified locally.
 
 ---
 
@@ -28,6 +28,7 @@ The project is inspired by the idea of an internal “USB-C for AI agents”: a 
 - [Phase 1: MCP Server Registry](#phase-1-mcp-server-registry)
 - [Phase 2: MCP Tool Catalog](#phase-2-mcp-tool-catalog)
 - [Phase 3: Authentication and RBAC](#phase-3-authentication-and-rbac)
+- [Phase 4: Invocation Gateway](#phase-4-invocation-gateway)
 - [Validation and Testing](#validation-and-testing)
 - [Design Decisions](#design-decisions)
 - [Known Limitations](#known-limitations)
@@ -63,7 +64,7 @@ MCP Gateway addresses this by acting as a secure control plane for internal MCP 
 │                        Go MCP Gateway                            │
 │                                                                 │
 │ Server Registry -  Tool Catalog -  JWT Auth -  RBAC               │
-│ Policy Enforcement -  Invocation Proxy -  Audit Logs -  Metrics   │
+│ Invocation Gateway -  JSON Schema Validation -  Audit Records    │
 └─────────────┬──────────────────┬──────────────────┬─────────────┘
               │                  │                  │
               ▼                  ▼                  ▼
@@ -75,7 +76,7 @@ MCP Gateway addresses this by acting as a secure control plane for internal MCP 
               ▼
       ┌─────────────────────────────────────────────────────────┐
       │ PostgreSQL                                               │
-      │ Users -  Servers -  Tools -  Permissions -  Audit Records   │
+      │ Users -  Servers -  Tools -  Invocation Audit Records       │
       └─────────────────────────────────────────────────────────┘
 ```
 
@@ -91,13 +92,13 @@ It focuses on:
 - PostgreSQL schema design and migrations
 - API gateway patterns
 - MCP server and tool registration
-- JSON Schema-driven tool definitions
+- JSON Schema-driven tool definitions and argument validation
 - JWT authentication
 - Role-based access control
+- Policy-controlled tool invocation
+- Durable invocation audit records
 - Secure password handling
-- Tool invocation policy enforcement
-- Auditability and observability
-- React-based developer tooling
+- Structured request logging with status codes
 - Containerized local development
 - Production-style testing and deployment practices
 
@@ -109,9 +110,9 @@ Go Gateway
 ├── Authorization
 ├── Server registry
 ├── Tool catalog
-├── Validation
+├── Argument validation
 ├── Policy checks
-├── Tool routing
+├── Tool routing and execution
 ├── Audit logging
 └── Observability
 
@@ -134,65 +135,71 @@ Developer / API Client
          │
          │ HTTP / JSON
          ▼
-┌─────────────────────────────────────┐
-│ Go MCP Gateway                      │
-│                                     │
-│ chi Router                          │
-│ Request ID middleware               │
-│ Timeout middleware                  │
-│ JWT authentication middleware       │
-│ RBAC middleware                     │
-│ Structured logs                     │
-│ Health endpoint                     │
-│ Authentication API                  │
-│ Server Registry API                 │
-│ Tool Catalog API                    │
-│ Request validation                  │
-└────────────────┬────────────────────┘
+┌──────────────────────────────────────┐
+│ Go MCP Gateway                       │
+│                                      │
+│ chi Router                           │
+│ Request ID middleware                │
+│ Status-aware request logging         │
+│ Timeout middleware                   │
+│ JWT authentication middleware        │
+│ RBAC middleware                      │
+│ Health endpoint                      │
+│ Authentication API                   │
+│ Server Registry API                  │
+│ Tool Catalog API                     │
+│ Invocation API                       │
+│ JSON Schema argument validation      │
+│ In-process mock tool executor        │
+└────────────────┬─────────────────────┘
                  │
                  │ pgx connection pool
                  ▼
-┌─────────────────────────────────────┐
-│ PostgreSQL 16                       │
-│                                     │
-│ users                               │
-│ mcp_servers                         │
-│ mcp_tools                           │
-│ schema_migrations                   │
-└─────────────────────────────────────┘
+┌──────────────────────────────────────┐
+│ PostgreSQL 16                        │
+│                                      │
+│ users                                │
+│ mcp_servers                          │
+│ mcp_tools                            │
+│ tool_invocations                     │
+│ schema_migrations                    │
+└──────────────────────────────────────┘
 ```
 
-### Authentication request flow
+### Invocation request flow
 
 ```text
-POST /api/v1/auth/login
+POST /api/v1/servers/{serverID}/tools/{toolID}/invoke
         │
         ▼
-Validate email and password
+JWT authentication middleware
         │
         ▼
-Fetch user by email from PostgreSQL
+Role check: admin or developer
         │
         ▼
-bcrypt password comparison
+Load server — must exist and be active
         │
         ▼
-Issue HS256 signed JWT
+Load tool — must exist and be enabled
         │
         ▼
-Client sends Authorization: Bearer <token>
+Policy check — only low-risk tools in Phase 4
         │
         ▼
-JWT validation middleware
+Validate arguments against stored JSON Schema
         │
         ▼
-Authenticated user stored in request context
+Create tool_invocations audit record (status: running)
         │
         ▼
-Role middleware verifies allowed role
+Execute via registered mock executor
         │
         ▼
-Protected API handler
+Update audit record: succeeded or failed
+        │
+        ▼
+Return structured invocation response
 ```
 
 ### Target architecture
@@ -228,20 +235,21 @@ Go MCP Gateway API
 |---|---|---|
 | Backend language | Go | Concurrent, strongly typed gateway implementation |
 | HTTP routing | `go-chi/chi` | Lightweight REST routing and middleware |
-| Database | PostgreSQL 16 | Users, server registry, tools, permissions, audit records |
+| Database | PostgreSQL 16 | Users, servers, tools, invocation audits |
 | PostgreSQL driver | `pgx/v5` | Native PostgreSQL driver and connection pool |
 | Migrations | `golang-migrate` | Version-controlled schema migrations |
-| JSON storage | PostgreSQL `jsonb` | Tool input schemas and future structured metadata |
+| JSON storage | PostgreSQL `jsonb` | Tool input schemas and invocation payloads |
+| Schema validation | `santhosh-tekuri/jsonschema/v6` | JSON Schema draft 2020-12 argument validation |
 | Authentication | JWT with HS256 | Local development access tokens |
-| JWT library | `github.com/golang-jwt/jwt/v5` | JWT signing, parsing, verification, and claims validation |
-| Password hashing | `golang.org/x/crypto/bcrypt` | Secure password hash generation and comparison |
+| JWT library | `github.com/golang-jwt/jwt/v5` | JWT signing, parsing, verification, claims validation |
+| Password hashing | `golang.org/x/crypto/bcrypt` | Password hash generation and comparison |
 | Configuration | Environment variables + `godotenv` | Local configuration and secrets loading |
-| Logging | Go `log/slog` | Structured JSON logs |
+| Logging | Go `log/slog` + chi `WrapResponseWriter` | Structured logs with request ID, status, bytes, latency |
 | API testing | `curl`, `jq`, Go `testing` | Manual API verification and automated tests |
 | Containerization | Docker Compose | Local PostgreSQL environment |
 | Frontend | React + TypeScript | Future discovery catalog and sandbox |
 | Observability | Prometheus + OpenTelemetry | Future metrics, traces, and health visibility |
-| MCP integration | Official Go MCP SDK | Future MCP discovery and tool invocation |
+| MCP integration | Official Go MCP SDK | Future real MCP discovery and invocation |
 
 ---
 
@@ -255,48 +263,45 @@ Go MCP Gateway API
 - PostgreSQL connection pool using `pgxpool`
 - Health endpoint with database connectivity validation
 - Structured JSON application logs
+- Request logging with request ID, method, path, HTTP status, bytes written, and duration
 - HTTP request ID and timeout middleware
 - Graceful HTTP shutdown
 - Version-controlled PostgreSQL schema migrations
 - MCP server registry with CRUD operations
 - MCP tool catalog with CRUD operations
-- Server-to-tool foreign key relationship
-- Cascading tool deletion when a server is deleted
-- JSON Schema storage and validation for tool inputs
+- Server-to-tool foreign key with cascading deletion
+- JSON Schema storage (`jsonb`) and structural validation for tool inputs
 - Tool risk classifications: `low`, `medium`, and `high`
 - Tool enabled/disabled state
 - Field-level validation responses
-- Duplicate server-name prevention
-- Duplicate tool-name prevention within a server
-- PostgreSQL typed unique-constraint handling
-- Local user table with active/inactive status
-- Bcrypt password-hash verification
-- Signed JWT access-token issuance
-- JWT issuer and expiration validation
+- Duplicate server-name and per-server tool-name prevention
+- Typed PostgreSQL unique-constraint handling
+- Local user table with bcrypt password hashes
+- Signed JWT access-token issuance with issuer/expiration validation
 - Bearer-token authentication middleware
 - `admin`, `developer`, and `viewer` roles
-- Admin-only server/tool mutations
-- Authenticated catalog reads
-- Current-user endpoint
-- Unit tests for server, tool, JWT, and authentication middleware behavior
+- Admin-only catalog mutations
+- **Phase 4: policy-controlled tool invocation**
+  - Authenticated invocation endpoint for `admin` and `developer`
+  - Server-active and tool-enabled policy checks
+  - Low-risk-only invocation policy
+  - Full JSON Schema validation of invocation arguments
+  - Durable `tool_invocations` audit records with `running → succeeded/failed` lifecycle
+  - Deterministic in-process mock executor (`echo`, `list_issues`)
+  - Audit foreign keys using `ON DELETE RESTRICT` to preserve accountability history
+- Unit tests for server, tool, JWT, auth middleware, and invocation service behavior
 
 ### Not yet implemented
 
 - OAuth/OIDC identity-provider integration
-- MCP Protected Resource Metadata endpoint
-- Server-level user permissions
-- Tool-level user permissions
-- MCP tool discovery from remote MCP servers
-- Remote server health checks
-- Tool invocation proxying
-- GitHub/Jira/Slack/Confluence integrations
-- External credential-reference storage
-- Audit records
-- Prometheus metrics
-- OpenTelemetry traces
-- React UI
-- CI/CD pipeline
-- Production deployment
+- Server-level and tool-level per-user permissions
+- Medium/high-risk invocation confirmation flows
+- Real MCP transport or external API invocation
+- GitHub/Jira/Slack/Confluence live integrations
+- Invocation history list endpoints
+- Credential reference storage
+- Prometheus metrics and OpenTelemetry traces
+- React UI, CI/CD pipeline, production deployment
 
 ---
 
@@ -308,9 +313,9 @@ Go MCP Gateway API
 | Phase 1 | Complete | MCP Server Registry | Persistent CRUD API for MCP server metadata |
 | Phase 2 | Complete | MCP Tool Catalog | Per-server tools, input schemas, risk levels, enablement |
 | Phase 3 | Complete | Authentication and RBAC | JWT authentication, local users, bcrypt, role protection |
-| Phase 4 | Next | Invocation Gateway | Validate, authorize, proxy, and audit tool calls |
-| Phase 5 | Planned | First Live Integration | GitHub or Jira invocation through the gateway |
-| Phase 6 | Planned | Observability | Audit logs, Prometheus metrics, OpenTelemetry traces |
+| Phase 4 | Complete | Invocation Gateway | Policy-checked, schema-validated, audited mock invocations |
+| Phase 5 | Next | First Live Integration | GitHub read-only invocation through the gateway |
+| Phase 6 | Planned | Observability | Invocation history API, Prometheus metrics, OpenTelemetry traces |
 | Phase 7 | Planned | React UI | Catalog, sandbox, history, and administration |
 | Phase 8 | Planned | Delivery and Polish | CI, containers, deployment, demo, documentation |
 
@@ -336,9 +341,13 @@ mcp-gateway/
 │   │   │   └── config.go
 │   │   │
 │   │   ├── domain/
+│   │   │   ├── invocation.go
 │   │   │   ├── server.go
 │   │   │   ├── tool.go
 │   │   │   └── user.go
+│   │   │
+│   │   ├── executor/
+│   │   │   └── mock_executor.go
 │   │   │
 │   │   ├── httpapi/
 │   │   │   ├── auth_handler.go
@@ -346,6 +355,7 @@ mcp-gateway/
 │   │   │   ├── auth_middleware_test.go
 │   │   │   ├── errors.go
 │   │   │   ├── handlers.go
+│   │   │   ├── invocation_handler.go
 │   │   │   ├── router.go
 │   │   │   ├── router_test.go
 │   │   │   ├── server_handler.go
@@ -356,12 +366,16 @@ mcp-gateway/
 │   │   │       └── postgres.go
 │   │   │
 │   │   ├── repository/
+│   │   │   ├── invocation_repository.go
 │   │   │   ├── server_repository.go
 │   │   │   ├── tool_repository.go
 │   │   │   └── user_repository.go
 │   │   │
 │   │   └── service/
 │   │       ├── auth_service.go
+│   │       ├── invocation_service.go
+│   │       ├── invocation_service_test.go
+│   │       ├── schema_validator.go
 │   │       ├── server_service.go
 │   │       ├── server_service_test.go
 │   │       ├── tool_service.go
@@ -373,7 +387,9 @@ mcp-gateway/
 │   │   ├── 000002_create_mcp_tools.down.sql
 │   │   ├── 000002_create_mcp_tools.up.sql
 │   │   ├── 000003_create_users.down.sql
-│   │   └── 000003_create_users.up.sql
+│   │   ├── 000003_create_users.up.sql
+│   │   ├── 000004_create_tool_invocations.down.sql
+│   │   └── 000004_create_tool_invocations.up.sql
 │   │
 │   ├── go.mod
 │   └── go.sum
@@ -397,11 +413,12 @@ mcp-gateway/
 | `cmd/passwordhash` | Local utility to generate bcrypt hashes for development user seeding |
 | `internal/auth` | JWT claims, signing, parsing, signature verification, expiration validation |
 | `internal/config` | Environment-variable loading and validation |
-| `internal/domain` | Core domain models, request models, constants, and response structures |
-| `internal/httpapi` | Routes, handlers, middleware, JSON decoding, responses, and HTTP error mapping |
+| `internal/domain` | Core domain models, request models, constants, response structures |
+| `internal/executor` | Tool execution implementations (currently the deterministic mock executor) |
+| `internal/httpapi` | Routes, handlers, middleware, JSON decoding, responses, HTTP error mapping |
 | `internal/platform/database` | PostgreSQL connection-pool setup and health verification |
 | `internal/repository` | Parameterized SQL and PostgreSQL persistence operations |
-| `internal/service` | Business rules, validation, authentication, and application use cases |
+| `internal/service` | Business rules, validation, authentication, schema validation, invocation orchestration |
 | `migrations` | Ordered and versioned database schema evolution |
 
 Dependency direction:
@@ -411,9 +428,9 @@ HTTP Handler / Middleware
            ↓
         Service
            ↓
-       Repository
+  Repository / Executor
            ↓
-       PostgreSQL
+  PostgreSQL / Mock Tools
 ```
 
 ---
@@ -446,13 +463,7 @@ Install `golang-migrate`:
 
 ```bash
 go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-```
-
-Ensure Go-installed binaries are accessible:
-
-```bash
 export PATH="$PATH:$(go env GOPATH)/bin"
-
 migrate -version
 ```
 
@@ -475,8 +486,6 @@ cp .env.example .env
 
 ### Configure JWT settings
 
-Generate a long local development secret:
-
 ```bash
 openssl rand -base64 48
 ```
@@ -496,90 +505,36 @@ docker compose up -d postgres
 docker compose ps
 ```
 
-Expected:
-
-```text
-mcp-gateway-postgres ... Up (healthy)
-```
-
-### Load environment variables
-
-Run this from the repository root:
+### Apply migrations
 
 ```bash
 set -a
 source .env
 set +a
+
+migrate -path backend/migrations -database "$DATABASE_URL" up
+migrate -path backend/migrations -database "$DATABASE_URL" version
 ```
 
-### Apply migrations
-
-```bash
-migrate \
-  -path backend/migrations \
-  -database "$DATABASE_URL" \
-  up
-```
-
-Verify the migration state:
-
-```bash
-migrate \
-  -path backend/migrations \
-  -database "$DATABASE_URL" \
-  version
-```
-
-Expected after Phase 3:
+Expected after Phase 4:
 
 ```text
-3
-```
-
-### Download backend dependencies
-
-```bash
-cd backend
-go mod download
-go mod tidy
-cd ..
+4
 ```
 
 ### Seed local users
 
-Generate bcrypt password hashes:
-
 ```bash
 cd backend
-
 go run ./cmd/passwordhash "AdminPass123!"
 go run ./cmd/passwordhash "DeveloperPass123!"
 go run ./cmd/passwordhash "ViewerPass123!"
-```
+cd ..
 
-Create `scripts/seed_users.sql` locally from the example file:
-
-```bash
 cp scripts/seed_users.sql.example scripts/seed_users.sql
-```
-
-Replace each placeholder bcrypt hash in `scripts/seed_users.sql` with the corresponding generated hash.
-
-Run the seed script:
-
-```bash
-set -a
-source .env
-set +a
+# Replace the placeholder hashes in scripts/seed_users.sql
 
 psql "$DATABASE_URL" -f scripts/seed_users.sql
-```
-
-Verify seeded users:
-
-```bash
-psql "$DATABASE_URL" \
-  -c "SELECT id, email, display_name, role, active FROM users ORDER BY role;"
 ```
 
 Local development users:
@@ -590,7 +545,7 @@ Local development users:
 | `developer@mcp-gateway.local` | `DeveloperPass123!` | `developer` |
 | `viewer@mcp-gateway.local` | `ViewerPass123!` | `viewer` |
 
-> These credentials are for local development only. Do not use them in any deployed environment.
+> Local development credentials only. Never use them in any deployed environment.
 
 ### Start the API
 
@@ -599,17 +554,11 @@ cd backend
 go run ./cmd/api
 ```
 
-The service runs at:
-
-```text
-http://localhost:8080
-```
+The service runs at `http://localhost:8080`.
 
 ---
 
 ## Environment Variables
-
-Create `.env` from `.env.example`.
 
 ```dotenv
 APP_ENV=development
@@ -637,240 +586,56 @@ JWT_TTL_MINUTES=60
 | `JWT_ISSUER` | Yes | Expected issuer claim for generated and accepted tokens |
 | `JWT_TTL_MINUTES` | Yes | Access-token lifetime in minutes |
 
-### Credential safety
-
-The `.env` file and `scripts/seed_users.sql` are local-only files and must not be committed.
-
-Future service credentials such as `GITHUB_TOKEN`, `JIRA_TOKEN`, and `SLACK_BOT_TOKEN` should be supplied through environment variables locally and a secrets manager in deployed environments.
-
----
-
-## Running the Project
-
-### Start infrastructure
-
-```bash
-docker compose up -d postgres
-```
-
-### Start backend
-
-```bash
-cd backend
-go run ./cmd/api
-```
-
-### Health check
-
-The health endpoint is intentionally public:
-
-```bash
-curl -s http://localhost:8080/health | jq
-```
-
-Expected shape:
-
-```json
-{
-  "status": "ok",
-  "database": "connected",
-  "timestamp": "2026-08-01T00:00:00Z"
-}
-```
-
-### Unauthenticated catalog access
-
-Catalog access now requires a bearer token:
-
-```bash
-curl -i http://localhost:8080/api/v1/servers
-```
-
-Expected:
-
-```text
-HTTP/1.1 401 Unauthorized
-```
-
-### Stop local services
-
-Stop the backend:
-
-```text
-Ctrl+C
-```
-
-Stop PostgreSQL while preserving data:
-
-```bash
-docker compose down
-```
-
-Remove PostgreSQL and all local data:
-
-```bash
-docker compose down -v
-```
-
-> Warning: `docker compose down -v` destroys all locally stored users, servers, and tools.
+`.env` and `scripts/seed_users.sql` are local-only files and must not be committed.
 
 ---
 
 ## Database Migrations
 
-Migration files are stored in:
-
-```text
-backend/migrations/
-```
-
 Current migrations:
 
 ```text
-000001_create_mcp_servers.up.sql
-000001_create_mcp_servers.down.sql
-
-000002_create_mcp_tools.up.sql
-000002_create_mcp_tools.down.sql
-
-000003_create_users.up.sql
-000003_create_users.down.sql
+000001_create_mcp_servers.up/down.sql
+000002_create_mcp_tools.up/down.sql
+000003_create_users.up/down.sql
+000004_create_tool_invocations.up/down.sql
 ```
 
-### Apply migrations
+### Apply and check
 
 ```bash
 set -a
 source .env
 set +a
 
-migrate \
-  -path backend/migrations \
-  -database "$DATABASE_URL" \
-  up
+migrate -path backend/migrations -database "$DATABASE_URL" up
+migrate -path backend/migrations -database "$DATABASE_URL" version
 ```
 
-### Check migration version
+### Inspect tables
 
 ```bash
-migrate \
-  -path backend/migrations \
-  -database "$DATABASE_URL" \
-  version
-```
-
-### Roll back the newest migration
-
-Only use this in local development:
-
-```bash
-migrate \
-  -path backend/migrations \
-  -database "$DATABASE_URL" \
-  down 1
-```
-
-### Inspect database tables
-
-```bash
-docker exec -it mcp-gateway-postgres \
-  psql -U mcp_gateway -d mcp_gateway
-```
-
-Then run:
-
-```sql
-\dt
-\d users
-\d mcp_servers
-\d mcp_tools
-
-SELECT id, email, display_name, role, active FROM users;
-SELECT * FROM mcp_servers;
-SELECT * FROM mcp_tools;
+psql "$DATABASE_URL" -c "\dt"
+psql "$DATABASE_URL" -c "SELECT id, email, role, active FROM users;"
+psql "$DATABASE_URL" -c "SELECT id, name, status FROM mcp_servers;"
+psql "$DATABASE_URL" -c "SELECT id, name, risk_level, enabled FROM mcp_tools;"
+psql "$DATABASE_URL" -c "SELECT id, status, duration_ms FROM tool_invocations ORDER BY created_at DESC LIMIT 5;"
 ```
 
 ---
 
 ## Authentication and Roles
 
-### Local authentication design
-
-Phase 3 implements local development authentication using email/password login and signed JWT access tokens.
-
-```text
-Password submitted by client
-        ↓
-bcrypt compares it to stored password hash
-        ↓
-Gateway verifies active user status
-        ↓
-Gateway generates an HS256-signed JWT
-        ↓
-Client sends token as Bearer authentication
-        ↓
-Gateway validates signature, issuer, expiration, subject, and role
-```
-
-Passwords are never stored in plaintext. The API does not serialize the `password_hash` field.
-
-### JWT claims
-
-The gateway includes these claims in issued access tokens:
-
-| Claim | Meaning |
-|---|---|
-| `sub` | Authenticated user UUID |
-| `iss` | JWT issuer, configured by `JWT_ISSUER` |
-| `iat` | Token issuance time |
-| `exp` | Token expiration time |
-| `email` | User email |
-| `displayName` | User display name |
-| `role` | `admin`, `developer`, or `viewer` |
-
-The application explicitly requires HS256 when parsing a token, validates the configured issuer, requires an expiration claim, checks that the subject is a valid UUID, and rejects unknown roles.
-
 ### Role model
 
-| Role | Catalog reads | Server/tool creation | Server/tool update | Server/tool deletion | Future tool invocation |
-|---|---:|---:|---:|---:|---:|
-| `admin` | Yes | Yes | Yes | Yes | Yes, subject to policy |
-| `developer` | Yes | No | No | No | Low-risk approved tools |
-| `viewer` | Yes | No | No | No | No |
-| Unauthenticated | No | No | No | No | No |
-
-### Bearer token format
-
-Send the token in the HTTP `Authorization` header:
-
-```text
-Authorization: Bearer <access-token>
-```
-
-Example:
-
-```bash
-curl -s http://localhost:8080/api/v1/servers \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
-```
+| Role | Catalog reads | Catalog mutations | Tool invocation |
+|---|---:|---:|---:|
+| `admin` | Yes | Yes | Yes (low-risk in Phase 4) |
+| `developer` | Yes | No | Yes (low-risk in Phase 4) |
+| `viewer` | Yes | No | No |
+| Unauthenticated | No | No | No |
 
 ### Login
-
-```http
-POST /api/v1/auth/login
-Content-Type: application/json
-```
-
-Request:
-
-```json
-{
-  "email": "admin@mcp-gateway.local",
-  "password": "AdminPass123!"
-}
-```
-
-Example:
 
 ```bash
 curl -s -X POST http://localhost:8080/api/v1/auth/login \
@@ -881,139 +646,36 @@ curl -s -X POST http://localhost:8080/api/v1/auth/login \
   }' | jq
 ```
 
-Successful response:
-
-```json
-{
-  "accessToken": "eyJhbGciOiJIUzI1NiIs...",
-  "tokenType": "Bearer",
-  "expiresAt": "2026-08-01T22:00:00Z",
-  "user": {
-    "id": "USER_UUID",
-    "email": "admin@mcp-gateway.local",
-    "displayName": "Gateway Admin",
-    "role": "admin"
-  }
-}
-```
-
-### Save an admin token
+### Save tokens
 
 ```bash
 export ADMIN_TOKEN="$(
   curl -s -X POST http://localhost:8080/api/v1/auth/login \
     -H "Content-Type: application/json" \
-    -d '{
-      "email": "admin@mcp-gateway.local",
-      "password": "AdminPass123!"
-    }' | jq -r '.accessToken'
+    -d '{"email":"admin@mcp-gateway.local","password":"AdminPass123!"}' \
+    | jq -r '.accessToken'
 )"
-```
 
-Confirm a token was returned without printing it in full:
-
-```bash
-echo "$ADMIN_TOKEN" | cut -c1-30
-```
-
-### Current authenticated user
-
-```http
-GET /api/v1/auth/me
-Authorization: Bearer <access-token>
-```
-
-Example:
-
-```bash
-curl -s http://localhost:8080/api/v1/auth/me \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
-```
-
-### Developer token
-
-```bash
 export DEVELOPER_TOKEN="$(
   curl -s -X POST http://localhost:8080/api/v1/auth/login \
     -H "Content-Type: application/json" \
-    -d '{
-      "email": "developer@mcp-gateway.local",
-      "password": "DeveloperPass123!"
-    }' | jq -r '.accessToken'
+    -d '{"email":"developer@mcp-gateway.local","password":"DeveloperPass123!"}' \
+    | jq -r '.accessToken'
 )"
-```
 
-### Viewer token
-
-```bash
 export VIEWER_TOKEN="$(
   curl -s -X POST http://localhost:8080/api/v1/auth/login \
     -H "Content-Type: application/json" \
-    -d '{
-      "email": "viewer@mcp-gateway.local",
-      "password": "ViewerPass123!"
-    }' | jq -r '.accessToken'
+    -d '{"email":"viewer@mcp-gateway.local","password":"ViewerPass123!"}' \
+    | jq -r '.accessToken'
 )"
-```
-
-### Expected authorization behavior
-
-Developer can list servers:
-
-```bash
-curl -i http://localhost:8080/api/v1/servers \
-  -H "Authorization: Bearer $DEVELOPER_TOKEN"
-```
-
-Expected: `200 OK`.
-
-Developer cannot create a server:
-
-```bash
-curl -i -X POST http://localhost:8080/api/v1/servers \
-  -H "Authorization: Bearer $DEVELOPER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "unauthorized-server",
-    "description": "This request must be denied",
-    "baseUrl": "http://localhost:3003",
-    "transportType": "streamable_http",
-    "ownerTeam": "developer-platform"
-  }'
-```
-
-Expected:
-
-```text
-HTTP/1.1 403 Forbidden
-```
-
-Invalid credentials:
-
-```bash
-curl -i -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "admin@mcp-gateway.local",
-    "password": "wrong-password"
-  }'
-```
-
-Expected:
-
-```text
-HTTP/1.1 401 Unauthorized
 ```
 
 ---
 
 ## API Reference
 
-Base URL:
-
-```text
-http://localhost:8080/api/v1
-```
+Base URL: `http://localhost:8080/api/v1`
 
 ### Public endpoints
 
@@ -1021,17 +683,23 @@ http://localhost:8080/api/v1
 |---|---|---|
 | `GET` | `/health` | Gateway and PostgreSQL health check |
 | `GET` | `/api/v1/` | API root message |
-| `POST` | `/api/v1/auth/login` | Authenticate local user and receive JWT |
+| `POST` | `/api/v1/auth/login` | Authenticate and receive JWT |
 
-### Authenticated endpoints
+### Authenticated endpoints (all roles)
 
-| Method | Endpoint | Allowed roles | Purpose |
-|---|---|---|---|
-| `GET` | `/api/v1/auth/me` | Admin, developer, viewer | Current authenticated identity |
-| `GET` | `/api/v1/servers` | Admin, developer, viewer | List MCP servers |
-| `GET` | `/api/v1/servers/{serverID}` | Admin, developer, viewer | Get MCP server |
-| `GET` | `/api/v1/servers/{serverID}/tools` | Admin, developer, viewer | List tools for server |
-| `GET` | `/api/v1/servers/{serverID}/tools/{toolID}` | Admin, developer, viewer | Get tool |
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/auth/me` | Current authenticated identity |
+| `GET` | `/api/v1/servers` | List MCP servers |
+| `GET` | `/api/v1/servers/{serverID}` | Get MCP server |
+| `GET` | `/api/v1/servers/{serverID}/tools` | List tools for server |
+| `GET` | `/api/v1/servers/{serverID}/tools/{toolID}` | Get tool |
+
+### Admin + developer endpoints
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/servers/{serverID}/tools/{toolID}/invoke` | Invoke an enabled low-risk tool |
 
 ### Admin-only endpoints
 
@@ -1046,196 +714,16 @@ http://localhost:8080/api/v1
 
 ---
 
-## MCP Server Registry API
-
-All endpoints in this section require:
-
-```text
-Authorization: Bearer <access-token>
-```
-
-### Create server
-
-```bash
-curl -s -X POST http://localhost:8080/api/v1/servers \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "github-mcp",
-    "description": "GitHub tools exposed through the MCP Gateway",
-    "baseUrl": "http://localhost:3001",
-    "transportType": "streamable_http",
-    "ownerTeam": "developer-platform"
-  }' | jq
-```
-
-### List servers
-
-```bash
-curl -s http://localhost:8080/api/v1/servers \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
-```
-
-### Get server
-
-```bash
-curl -s "http://localhost:8080/api/v1/servers/$SERVER_ID" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
-```
-
-### Update server
-
-```bash
-curl -s -X PATCH "http://localhost:8080/api/v1/servers/$SERVER_ID" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "status": "inactive"
-  }' | jq
-```
-
-### Delete server
-
-```bash
-curl -i -X DELETE "http://localhost:8080/api/v1/servers/$SERVER_ID" \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
-```
-
-Deleting a server also removes its associated tools through the `mcp_tools.server_id` foreign-key cascade.
-
----
-
-## MCP Tool Catalog API
-
-MCP tools allow clients and language models to interact with external systems, including APIs, databases, and internal workflows. Each record stores the expected tool arguments as an `inputSchema` JSON object.
-
-### Create a tool
-
-```bash
-curl -s -X POST "http://localhost:8080/api/v1/servers/$SERVER_ID/tools" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "list_issues",
-    "title": "List GitHub Issues",
-    "description": "Returns issues from a specified GitHub repository",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "owner": {
-          "type": "string",
-          "description": "GitHub organization or user name"
-        },
-        "repo": {
-          "type": "string",
-          "description": "GitHub repository name"
-        },
-        "state": {
-          "type": "string",
-          "enum": ["open", "closed", "all"],
-          "default": "open"
-        }
-      },
-      "required": ["owner", "repo"],
-      "additionalProperties": false
-    },
-    "riskLevel": "low",
-    "enabled": true
-  }' | jq
-```
-
-### List tools for a server
-
-```bash
-curl -s "http://localhost:8080/api/v1/servers/$SERVER_ID/tools" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
-```
-
-### Get one tool
-
-```bash
-curl -s \
-  "http://localhost:8080/api/v1/servers/$SERVER_ID/tools/$TOOL_ID" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
-```
-
-### Update tool
-
-```bash
-curl -s -X PATCH \
-  "http://localhost:8080/api/v1/servers/$SERVER_ID/tools/$TOOL_ID" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "riskLevel": "medium",
-    "enabled": false
-  }' | jq
-```
-
-### Delete tool
-
-```bash
-curl -i -X DELETE \
-  "http://localhost:8080/api/v1/servers/$SERVER_ID/tools/$TOOL_ID" \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
-```
-
----
-
-## API Error Format
-
-Errors use this structured JSON shape:
-
-```json
-{
-  "error": "validation_error",
-  "message": "request validation failed",
-  "details": [
-    {
-      "field": "inputSchema",
-      "message": "must declare \"type\": \"object\""
-    }
-  ]
-}
-```
-
-| HTTP status | Error code | Meaning |
-|---:|---|---|
-| `400` | `invalid_json` | Malformed JSON or unknown request field |
-| `400` | `validation_error` | Submitted request fields are invalid |
-| `400` | `invalid_server_id` | `serverID` is not a UUID |
-| `400` | `invalid_tool_id` | `toolID` is not a UUID |
-| `401` | `missing_or_invalid_authorization` | Missing or malformed Bearer header |
-| `401` | `invalid_token` | JWT signature, claims, or format is invalid |
-| `401` | `expired_token` | JWT is expired |
-| `401` | `invalid_credentials` | Email/password combination is invalid |
-| `403` | `forbidden` | Authenticated user lacks required role |
-| `404` | `server_not_found` | Requested MCP server does not exist |
-| `404` | `tool_not_found` | Tool does not exist under the requested server |
-| `409` | `duplicate_server_name` | Another server already uses that name |
-| `409` | `duplicate_tool_name` | Tool name already exists for the parent server |
-| `500` | `internal_error` | Unexpected application or database failure |
-
----
-
 ## Phase 0: Foundation
 
 **Status:** Complete
 
-### Goal
-
-Create a reliable local development baseline before adding product functionality.
-
-### Completed work
-
 - Git repository and Go module initialization
-- Go API entry point
 - Environment configuration
 - Docker Compose PostgreSQL service
 - PostgreSQL connection pool
 - Health endpoint
-- Request-ID middleware
-- Timeout middleware
+- Request-ID and timeout middleware
 - Structured JSON logging
 - Graceful shutdown
 - Baseline tests
@@ -1246,11 +734,7 @@ Create a reliable local development baseline before adding product functionality
 
 **Status:** Complete
 
-### Goal
-
-Create a persistent source of truth for MCP servers known to the gateway.
-
-### Implemented endpoints
+### Endpoints
 
 ```text
 POST   /api/v1/servers
@@ -1266,22 +750,12 @@ DELETE /api/v1/servers/{serverID}
 |---|---|
 | `id` | UUID primary key |
 | `name` | Unique human-readable server identifier |
-| `description` | Server purpose and supported capabilities |
+| `description` | Server purpose and capabilities |
 | `baseUrl` | Future MCP server connection URL |
 | `transportType` | `streamable_http`, `sse`, or `stdio` |
-| `status` | `active`, `inactive`, or `unhealthy` |
+| `status` | `active`, `inactive`, or `unhealthy`; defaults to `active` on create |
 | `ownerTeam` | Team responsible for server operations |
-| `createdAt` | UTC record creation timestamp |
-| `updatedAt` | UTC last-update timestamp |
-
-### Phase 1 acceptance criteria
-
-- [x] Migration creates `mcp_servers`
-- [x] Server CRUD endpoints work
-- [x] URL, transport, status, and required fields validate
-- [x] Duplicate server names return `409`
-- [x] Unknown server IDs return `404`
-- [x] Unit tests pass
+| `createdAt` / `updatedAt` | UTC timestamps |
 
 ---
 
@@ -1289,11 +763,7 @@ DELETE /api/v1/servers/{serverID}
 
 **Status:** Complete
 
-### Goal
-
-Associate discoverable tool metadata with each registered MCP server.
-
-### Implemented endpoints
+### Endpoints
 
 ```text
 POST   /api/v1/servers/{serverID}/tools
@@ -1308,35 +778,21 @@ DELETE /api/v1/servers/{serverID}/tools/{toolID}
 | Field | Description |
 |---|---|
 | `id` | UUID primary key |
-| `serverId` | Parent server UUID |
+| `serverId` | Parent server UUID (`ON DELETE CASCADE`) |
 | `name` | Tool identifier, unique within parent server |
 | `title` | Optional display name |
 | `description` | Human-readable tool purpose |
-| `inputSchema` | JSON Schema object for accepted arguments |
-| `riskLevel` | `low`, `medium`, or `high` |
-| `enabled` | Whether the tool can be exposed later |
-| `createdAt` | UTC creation timestamp |
-| `updatedAt` | UTC last-update timestamp |
+| `inputSchema` | JSON Schema object (`jsonb`) for accepted arguments |
+| `riskLevel` | `low`, `medium`, or `high`; defaults to `low` |
+| `enabled` | Whether the tool can be invoked; defaults to `true` |
 
 ### Tool risk levels
 
-| Risk level | Examples | Future policy |
+| Risk level | Examples | Current invocation policy |
 |---|---|---|
-| `low` | Search repositories, list issues, read documentation | Allow for authorized developers |
-| `medium` | Create Jira issue, send Slack message, open pull request | Require explicit confirmation |
-| `high` | Delete repository, bulk-change tickets, alter production settings | Deny by default or require elevated approval |
-
-### Phase 2 acceptance criteria
-
-- [x] Migration creates `mcp_tools`
-- [x] Tools belong to valid parent servers
-- [x] Tool input schemas require a JSON object with `"type": "object"`
-- [x] `input_schema` persists as PostgreSQL `jsonb`
-- [x] Per-server tool-name uniqueness is enforced
-- [x] Tool CRUD endpoints work
-- [x] Tool risk and enabled state validate
-- [x] Server deletion cascades to tool deletion
-- [x] Unit tests pass
+| `low` | Search repos, list issues, read docs | Invocable by admin/developer |
+| `medium` | Create issue, send message, open PR | Rejected (`403`) pending confirmation flow |
+| `high` | Delete repo, bulk ticket changes, production settings | Rejected (`403`) pending elevated approval |
 
 ---
 
@@ -1344,134 +800,207 @@ DELETE /api/v1/servers/{serverID}/tools/{toolID}
 
 **Status:** Complete
 
+- `users` table with bcrypt password hashes
+- Local seed users with `admin`, `developer`, and `viewer` roles
+- Login endpoint issuing HS256 JWTs
+- Explicit signing-method, issuer, expiration, subject, and role validation
+- Bearer-token middleware with request-context identity
+- Role middleware for admin-only mutations
+- `/auth/me` current-identity endpoint
+- Auth and middleware tests
+
+### Route protection summary
+
+```text
+Public:               /health, /api/v1/, POST /auth/login
+Authenticated:        /auth/me, server/tool catalog reads
+Admin + developer:    POST .../tools/{toolID}/invoke
+Admin only:           server/tool catalog mutations
+```
+
+---
+
+## Phase 4: Invocation Gateway
+
+**Status:** Complete
+
 ### Goal
 
-Protect the gateway’s registry and catalog using local development authentication and role-based authorization.
+Provide a policy-controlled, audited path for invoking a registered tool — without yet connecting to any external system. A deterministic in-process mock executor proves the entire lifecycle end to end before Phase 5 adds live integrations.
 
-### Implemented components
+### Endpoint
 
-- `users` table and migration
-- Local development users with email, display name, role, active state, and bcrypt password hash
-- Password-hash generation utility
-- Local user seed workflow
-- Login endpoint
-- Signed HS256 JWT access tokens
-- Required JWT issuer validation
-- Required JWT expiration validation
-- Explicit HS256 signing-method validation
-- Bearer-token parsing middleware
-- Request-context storage of authenticated identity
-- Role authorization middleware
-- `admin`, `developer`, and `viewer` roles
-- Authenticated `/auth/me` endpoint
-- Catalog read protection
-- Admin-only server and tool mutations
-- Authentication and middleware tests
-
-### User data model
-
-```sql
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    role TEXT NOT NULL,
-    active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+```http
+POST /api/v1/servers/{serverID}/tools/{toolID}/invoke
+Authorization: Bearer <access-token>
+Content-Type: application/json
 ```
+
+Request body:
+
+```json
+{
+  "arguments": {
+    "message": "Hello from Phase 4"
+  }
+}
+```
+
+The request mirrors MCP's `tools/call` shape, where callers supply a tool name/identifier and an arguments object.
+
+### Invocation policy chain
+
+Every invocation must pass all of these checks before executing:
+
+1. **Authentication** — valid, unexpired JWT.
+2. **Role** — `admin` or `developer`; `viewer` receives `403`.
+3. **Server status** — server must exist and be `active`, otherwise `409 server_inactive`.
+4. **Tool state** — tool must exist under the server and be `enabled`, otherwise `409 tool_disabled`.
+5. **Risk level** — only `low` in Phase 4, otherwise `403 tool_risk_not_allowed`.
+6. **Argument validation** — arguments must be a JSON object satisfying the tool's stored JSON Schema, otherwise `400 validation_error`.
+
+### Audit lifecycle
+
+```text
+Validate request
+    ↓
+INSERT tool_invocations (status = 'running')
+    ↓
+Execute via ToolExecutor
+    ↓
+UPDATE tool_invocations
+    ├── success → status 'succeeded', response_payload, duration_ms, completed_at
+    └── failure → status 'failed', error_code, error_message, duration_ms, completed_at
+```
+
+Audit foreign keys use `ON DELETE RESTRICT`: deleting a server, tool, or user is blocked while audit records reference it. This preserves the accountability trail until an explicit retention policy is introduced.
+
+### `tool_invocations` table
 
 | Field | Description |
 |---|---|
-| `id` | UUID user identifier |
-| `email` | Unique login identifier |
-| `password_hash` | Bcrypt hash; never serialized in API responses |
-| `display_name` | User-facing display name |
-| `role` | `admin`, `developer`, or `viewer` |
-| `active` | Whether the account can log in |
-| `created_at` | UTC creation timestamp |
-| `updated_at` | UTC last-update timestamp |
+| `id` | UUID primary key |
+| `server_id` / `tool_id` / `user_id` | Referenced resources (`RESTRICT`) |
+| `status` | `running`, `succeeded`, `failed`, or `denied` |
+| `request_arguments` | Validated invocation arguments (`jsonb`) |
+| `response_payload` | Tool result (`jsonb`, nullable) |
+| `error_code` / `error_message` | Failure classification (nullable) |
+| `duration_ms` | Execution duration |
+| `created_at` / `completed_at` | Lifecycle timestamps |
 
-### Route protection model
+### Mock executor
 
-```text
-Public:
-GET  /health
-GET  /api/v1/
-POST /api/v1/auth/login
+The Phase 4 executor is in-process and deterministic. It makes **no network calls** and reads **no credentials**.
 
-Authenticated:
-GET  /api/v1/auth/me
-GET  /api/v1/servers
-GET  /api/v1/servers/{serverID}
-GET  /api/v1/servers/{serverID}/tools
-GET  /api/v1/servers/{serverID}/tools/{toolID}
+Supported tools:
 
-Admin only:
-POST   /api/v1/servers
-PATCH  /api/v1/servers/{serverID}
-DELETE /api/v1/servers/{serverID}
-POST   /api/v1/servers/{serverID}/tools
-PATCH  /api/v1/servers/{serverID}/tools/{toolID}
-DELETE /api/v1/servers/{serverID}/tools/{toolID}
+| Tool name | Arguments | Mock behavior |
+|---|---|---|
+| `echo` | `{ "message": string }` | Returns the message verbatim |
+| `list_issues` | `{ "owner", "repo", "state?", "per_page?" }` | Returns two stable mock issues with `"mock": true` |
+
+Any other tool name returns an unsupported-tool error, which is recorded as a failed invocation.
+
+### JSON Schema validation details
+
+Arguments are validated with `santhosh-tekuri/jsonschema/v6` (draft 2020-12 default). Both the stored schema and the incoming arguments are parsed with `jsonschema.UnmarshalJSON` and passed to `compiler.AddResource` / `schema.Validate` as decoded JSON values.
+
+> Implementation note: passing an `io.Reader` (e.g., `bytes.Reader`) to `AddResource` is a v5 API pattern and fails at runtime in v6 with `invalid jsonType *bytes.Reader`. Always feed v6 decoded documents via `jsonschema.UnmarshalJSON`.
+
+### Verified manual walkthrough
+
+Register a mock server (admin), then a low-risk echo tool:
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/servers \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "mock-tools",
+    "description": "Local deterministic mock tools for invocation testing",
+    "baseUrl": "http://localhost:9999",
+    "transportType": "streamable_http",
+    "ownerTeam": "developer-platform"
+  }' | jq
 ```
 
-### Phase 3 acceptance criteria
+```bash
+curl -s -X POST "http://localhost:8080/api/v1/servers/$SERVER_ID/tools" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "echo",
+    "title": "Echo",
+    "description": "Returns the supplied message for deterministic gateway testing",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "message": { "type": "string", "minLength": 1 }
+      },
+      "required": ["message"],
+      "additionalProperties": false
+    },
+    "riskLevel": "low",
+    "enabled": true
+  }' | jq
+```
 
-- [x] Migration creates `users`
-- [x] Passwords are stored as bcrypt hashes, not plaintext
-- [x] Local seed users can log in
-- [x] Login returns signed JWT access token and user metadata
-- [x] Invalid credentials return `401`
-- [x] Expired/invalid/malformed tokens return `401`
-- [x] `/auth/me` returns authenticated identity
-- [x] Catalog reads require valid authentication
-- [x] Admins can mutate servers and tools
-- [x] Developers and viewers can read catalogs
-- [x] Developers and viewers receive `403` for catalog mutation attempts
-- [x] Health endpoint remains public
-- [x] Unit tests, formatting, and static checks pass
+Invoke as a developer:
 
-### MCP authorization direction
+```bash
+curl -s -X POST \
+  "http://localhost:8080/api/v1/servers/$SERVER_ID/tools/$TOOL_ID/invoke" \
+  -H "Authorization: Bearer $DEVELOPER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"arguments": {"message": "Hello from Phase 4"}}' | jq
+```
 
-Phase 3 uses a local JWT issuer to establish authentication and role boundaries during development. The eventual MCP-facing authorization model should move to OAuth/OIDC: MCP protected servers are expected to expose OAuth Protected Resource Metadata so clients can discover authorization servers and obtain appropriate access tokens. 
+Verified response:
+
+```json
+{
+  "invocationId": "INVOCATION_UUID",
+  "serverId": "SERVER_UUID",
+  "toolId": "TOOL_UUID",
+  "toolName": "echo",
+  "status": "succeeded",
+  "result": { "message": "Hello from Phase 4" },
+  "durationMs": 9,
+  "completedAt": "2026-08-03T15:18:00Z"
+}
+```
+
+Verify the audit record:
+
+```bash
+psql "$DATABASE_URL" -c "
+  SELECT status, request_arguments, response_payload, duration_ms
+  FROM tool_invocations
+  ORDER BY created_at DESC
+  LIMIT 1;
+"
+```
+
+### Phase 4 acceptance criteria
+
+- [x] Migration creates `tool_invocations` with `RESTRICT` foreign keys
+- [x] Developer can invoke an enabled, active, low-risk tool
+- [x] Arguments are validated against the tool's stored JSON Schema
+- [x] Missing/invalid/extra arguments return `400 validation_error`
+- [x] Viewer invocation returns `403`
+- [x] Medium/high-risk tools return `403 tool_risk_not_allowed`
+- [x] Disabled tools return `409 tool_disabled`
+- [x] Inactive servers return `409 server_inactive`
+- [x] Successful invocations persist `succeeded` audit rows with result and latency
+- [x] Failed executions persist `failed` audit rows with error details
+- [x] Mock executor returns deterministic output with no network access
+- [x] Request logs include HTTP status codes and response sizes
+- [x] `go test ./...` and `go vet ./...` pass
 
 ---
 
 ## Validation and Testing
 
-### Format code
-
-```bash
-cd backend
-gofmt -w .
-```
-
-### Resolve dependency metadata
-
-```bash
-cd backend
-go mod tidy
-```
-
-### Run unit tests
-
-```bash
-cd backend
-go test ./...
-```
-
-### Run static analysis
-
-```bash
-cd backend
-go vet ./...
-```
-
-### Complete local quality check
-
 ```bash
 cd backend
 
@@ -1481,393 +1010,138 @@ go test ./...
 go vet ./...
 ```
 
-### Authentication smoke test
+### Invocation smoke test
 
 ```bash
-export ADMIN_TOKEN="$(
-  curl -s -X POST http://localhost:8080/api/v1/auth/login \
-    -H "Content-Type: application/json" \
-    -d '{
-      "email": "admin@mcp-gateway.local",
-      "password": "AdminPass123!"
-    }' | jq -r '.accessToken'
-)"
-
-curl -s http://localhost:8080/api/v1/auth/me \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
-
-curl -s http://localhost:8080/api/v1/servers \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
+curl -s -X POST \
+  "http://localhost:8080/api/v1/servers/$SERVER_ID/tools/$TOOL_ID/invoke" \
+  -H "Authorization: Bearer $DEVELOPER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"arguments": {"message": "smoke test"}}' | jq
 ```
+
+### Structured request logging
+
+Every request logs method, path, request ID, status, bytes, and duration:
+
+```json
+{"time":"...","level":"INFO","msg":"http request completed","request_id":"...","method":"POST","path":"/api/v1/servers/.../invoke","status":200,"bytes":312,"duration_ms":9}
+```
+
+Status capture uses chi's `middleware.NewWrapResponseWriter`; a status of `0` (handler never wrote one explicitly) is logged as `200`.
 
 ---
 
 ## Design Decisions
 
-### Why Go
+### Why a mock executor before live integrations
 
-The gateway is an I/O-heavy control-plane service. It authenticates callers, queries PostgreSQL, invokes external MCP services or APIs, enforces policy, stores audits, and emits operational signals.
+The invocation path has many failure modes — authentication, authorization, policy, schema validation, audit persistence — that are independent of any third-party API. Proving them against a deterministic executor means Phase 5's GitHub integration only adds one new variable: the external call itself.
 
-Go is a strong fit because it provides:
+### Why `ON DELETE RESTRICT` for audit records
 
-- Static typing
-- Fast startup
-- Straightforward container deployment
-- Lightweight concurrency through goroutines
-- Strong HTTP standard library
-- Explicit error handling
-- Good suitability for API gateways and platform services
+Server/tool deletion cascades made sense for the catalog (`mcp_tools` → `mcp_servers`), because orphaned catalog rows are useless. Audit rows are the opposite: they are the record of what happened, so deleting referenced resources is blocked rather than silently erasing history.
 
-Python remains appropriate for future LangGraph workflows, RAG pipelines, agent evaluation, and LLM reasoning.
+### Why validate arguments against stored schemas
 
-### Why JWT for this phase
+The gateway is the policy boundary. Validating arguments against each tool's stored `inputSchema` guarantees that every invocation — and its audit record — contains exactly the shape the tool declared, before any executor or external system sees it.
 
-JWT provides a self-contained signed token format appropriate for a local development authentication flow. The gateway verifies the token signature and required claims without querying the user table on every authenticated request.
+### Why `jsonschema/v6`
 
-This phase validates:
-
-- HS256 algorithm is used explicitly
-- Issuer matches configured `JWT_ISSUER`
-- Expiration is present and valid
-- Subject is a valid UUID
-- Role is known and supported
-
-Future production work should use OIDC/OAuth and asymmetric signing with a trusted identity provider rather than a shared HMAC secret.
-
-### Why bcrypt
-
-Passwords must not be stored as plaintext. Bcrypt uses an adaptive password hashing algorithm, and its comparison function checks a submitted plaintext candidate against the stored hash. 
-
-### Why local JWT before OIDC
-
-A local development login flow makes the authorization model immediately testable without requiring external identity-provider configuration.
-
-The transition path is:
-
-```text
-Phase 3:
-Local PostgreSQL users + bcrypt + HS256 JWT
-
-Future:
-Keycloak/Auth0/Okta + OAuth/OIDC + JWKS + RS256/ES256 tokens
-```
-
-### Why layered backend design
-
-```text
-Handlers: HTTP concerns
-Middleware: authentication and authorization enforcement
-Services: business rules and use cases
-Repositories: persistence
-Domain: shared application structures
-```
-
-This structure makes later policy, audit, and invocation work easier to test and evolve.
+Draft 2020-12 support, active maintenance, and a compiled-schema API that maps cleanly onto stored `jsonb` documents. Schemas are parsed once per invocation via `jsonschema.UnmarshalJSON`; a compiled-schema cache is a Phase 6 optimization.
 
 ---
 
 ## Known Limitations
 
-The following are intentional at the end of Phase 3:
+Intentional at the end of Phase 4:
 
-- Authentication is local-development only.
-- JWT signing uses a shared HS256 secret rather than asymmetric keys.
-- No token refresh endpoint exists.
-- No logout, token revocation list, or session management exists.
-- User registration and user-management endpoints do not exist.
-- No password reset or account-recovery workflow exists.
-- No OAuth/OIDC provider integration exists.
-- No MCP OAuth Protected Resource Metadata endpoint exists.
-- No server-level user permissions exist; roles are global.
-- No tool-level user permissions exist; roles are global.
-- No automatic MCP tool discovery exists.
-- No server health checks exist.
-- No external-tool invocation path exists.
-- No external API credential-reference store exists.
-- No audit log records or metrics exist.
-- No React UI, CI/CD workflow, or deployed environment exists.
+- Invocation executes against an in-process mock, not real MCP servers or APIs.
+- Only `low` risk tools are invocable; no confirmation flow exists for medium/high.
+- Roles are global; no per-server or per-tool user permissions.
+- No invocation history list endpoints yet (query PostgreSQL directly).
+- Failed invocations return a generic API error; details live in the audit row and logs.
+- Schema compilation happens per request (no cache).
+- No metrics, tracing, or rate limiting.
+- No OAuth/OIDC, refresh tokens, or token revocation.
+- No React UI, CI/CD, or deployment.
 
 ---
 
 ## Planned Phases
 
-### Phase 4: Invocation Gateway
+### Phase 5: First Live Integration (Next)
 
-Phase 4 will introduce a controlled path for invoking a registered tool.
+Replace the mock path for one server with a real GitHub read-only adapter:
 
-Planned lifecycle:
-
-```text
-Tool invocation request
-        ↓
-Authenticate caller
-        ↓
-Authorize caller role and future server/tool permission
-        ↓
-Confirm server is active
-        ↓
-Confirm tool is enabled
-        ↓
-Validate arguments against tool input schema
-        ↓
-Evaluate risk level and write-operation policy
-        ↓
-Create audit record
-        ↓
-Invoke a mock MCP server or adapter
-        ↓
-Redact sensitive values
-        ↓
-Store response, latency, and failure details
-        ↓
-Return structured invocation result
-```
-
-Start with a mock low-risk `echo` or `list_issues` tool before connecting to a live third-party API.
-
-### Phase 5: First Live Integration
-
-Initial integration target: GitHub read-only tools.
-
-Candidate tools:
-
-- `search_repositories`
-- `list_issues`
-- `get_issue`
-- `list_pull_requests`
-- `get_pull_request`
-
-A later integration can route through an existing Jira MCP server.
+- `search_repositories`, `list_issues`, `get_issue`
+- GitHub token via environment variable, never stored in the database
+- Executor selection by server type (`mock` vs `github`)
+- External call latency and errors recorded in the same audit table
 
 ### Phase 6: Observability
 
-Planned features:
-
-- Persistent invocation audit records
-- Request IDs
-- Structured invocation logs
-- Prometheus metrics
-- OpenTelemetry traces
-- Server health status
-- Tool success and error rates
-- p50, p95, and p99 latency
-- Tool usage dashboard
+- Invocation history list/detail endpoints
+- Prometheus metrics (`/metrics`)
+- OpenTelemetry traces across the invocation chain
+- Tool success/error rates and p95 latency
 
 ### Phase 7: React UI
 
-Planned screens:
-
-- MCP server discovery catalog
-- Server details
-- Tool catalog
-- Tool input-schema viewer
-- JSON invocation sandbox
-- Confirmation dialog for medium/high-risk tools
-- Invocation history
-- Admin management
-- Observability dashboard
+Catalog, tool detail with schema viewer, JSON invocation sandbox, invocation history, admin management.
 
 ### Phase 8: Delivery and Polish
 
-Planned improvements:
-
-- GitHub Actions CI
-- Backend Dockerfile
-- Frontend Dockerfile
-- Integration tests using Testcontainers
-- OpenAPI documentation
-- Cloud deployment
-- Architecture decision records
-- Screenshots and demo video
-- Security and operations documentation
+GitHub Actions CI, Dockerfiles, Testcontainers integration tests, OpenAPI docs, deployment, demo video.
 
 ---
 
 ## Troubleshooting
 
-### PostgreSQL container does not start
+### Invocation returns `invocation_failed` with no audit row
+
+The failure occurred before the audit insert: check the backend terminal — the handler logs the root cause via `slog.Error("tool invocation failed", ...)`. A known cause was passing an `io.Reader` to `jsonschema/v6` `AddResource`; use `jsonschema.UnmarshalJSON` to decode documents first.
+
+### `compile tool input schema ... invalid jsonType *bytes.Reader`
+
+You are on `jsonschema/v6` but using the v5 `AddResource(url, io.Reader)` pattern. See the v6-compatible `schema_validator.go` described in Phase 4.
+
+### Route returns 404 / non-JSON response on tool creation
+
+Trailing-slash mismatch. `r.Post("/{serverID}/tools/", ...)` matches `.../tools/`, not `.../tools`. Either call the trailing-slash URL or add `middleware.StripSlashes` to the router.
+
+### Request logs lack status codes
+
+Wrap the writer: `middleware.NewWrapResponseWriter(w, r.ProtoMajor)` and log `ww.Status()` / `ww.BytesWritten()` after `next.ServeHTTP`.
+
+### Reset all server and tool records (keeps users)
 
 ```bash
-docker compose logs postgres
+psql "$DATABASE_URL" -c "TRUNCATE TABLE mcp_tools, mcp_servers CASCADE;"
 ```
 
-Check whether port `5432` is occupied:
+Note: existing `tool_invocations` rows referencing those rows will block the truncate because of `RESTRICT`. Remove them first if needed:
 
 ```bash
-lsof -i :5432
+psql "$DATABASE_URL" -c "TRUNCATE TABLE tool_invocations, mcp_tools, mcp_servers CASCADE;"
 ```
 
-### Application cannot connect to PostgreSQL
-
-```bash
-docker compose ps
-```
-
-Check the connection string:
-
-```bash
-set -a
-source .env
-set +a
-
-echo "$DATABASE_URL"
-```
-
-Test directly:
-
-```bash
-docker exec -it mcp-gateway-postgres \
-  psql -U mcp_gateway -d mcp_gateway \
-  -c "SELECT 1;"
-```
-
-### `migrate: command not found`
-
-```bash
-go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-
-export PATH="$PATH:$(go env GOPATH)/bin"
-
-migrate -version
-```
-
-### Login returns `401 invalid_credentials`
-
-Confirm users exist:
-
-```bash
-set -a
-source .env
-set +a
-
-psql "$DATABASE_URL" \
-  -c "SELECT email, role, active FROM users ORDER BY email;"
-```
-
-If no users exist, regenerate bcrypt hashes and run the local seed file again.
-
-### Authenticated request returns `401 invalid_token`
-
-Possible causes:
-
-- Token has expired.
-- `JWT_SECRET` changed after the token was issued.
-- `JWT_ISSUER` changed after the token was issued.
-- The header does not use `Authorization: Bearer <token>` format.
-
-Login again to receive a fresh token:
-
-```bash
-curl -s -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "admin@mcp-gateway.local",
-    "password": "AdminPass123!"
-  }' | jq
-```
-
-### Request returns `403 forbidden`
-
-Your token is valid, but the assigned role cannot perform the operation.
-
-Use an admin token for catalog mutations:
-
-```bash
-curl -s http://localhost:8080/api/v1/auth/me \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
-```
-
-### Reset local server and tool records
-
-To remove all tool and server entries while keeping tables, migrations, and users:
-
-```bash
-set -a
-source .env
-set +a
-
-psql "$DATABASE_URL" \
-  -c "TRUNCATE TABLE mcp_tools, mcp_servers CASCADE;"
-```
-
-Verify:
-
-```bash
-psql "$DATABASE_URL" \
-  -c "SELECT COUNT(*) AS server_count FROM mcp_servers;"
-
-psql "$DATABASE_URL" \
-  -c "SELECT COUNT(*) AS tool_count FROM mcp_tools;"
-```
-
-### Reset the entire local database
-
-This removes all local data, including users, servers, tools, and migration state:
+### Full local reset
 
 ```bash
 docker compose down -v
 docker compose up -d postgres
-
-set -a
-source .env
-set +a
-
-migrate \
-  -path backend/migrations \
-  -database "$DATABASE_URL" \
-  up
-```
-
-Then seed development users again.
-
-### `.env` does not load
-
-Run the backend from `backend/`:
-
-```bash
-cd backend
-go run ./cmd/api
-```
-
-### Port 8080 is already in use
-
-```bash
-lsof -i :8080
-```
-
-Stop the process or update:
-
-```dotenv
-HTTP_PORT=8081
-```
-
-Then restart the backend.
-
-### Tests fail after import changes
-
-All internal imports must use:
-
-```text
-github.com/iashu2k/mcp-gateway/backend
-```
-
-Then run:
-
-```bash
-cd backend
-go mod tidy
-gofmt -w .
-go test ./...
+set -a; source .env; set +a
+migrate -path backend/migrations -database "$DATABASE_URL" up
+# Re-seed users
 ```
 
 ---
 
 ## Contributing Workflow
 
-Use small, phase-focused commits.
-
 ```bash
-git checkout -b feat/invocation-gateway
+git checkout -b feat/github-integration
 
 cd backend
 gofmt -w .
@@ -1877,21 +1151,8 @@ go vet ./...
 
 cd ..
 git add .
-git commit -m "feat: add policy-controlled tool invocation"
-git push -u origin feat/invocation-gateway
-```
-
-Suggested commit convention:
-
-```text
-feat: add MCP server registry CRUD API
-feat: add MCP tool catalog
-feat: add JWT authentication and RBAC
-feat: add tool invocation audit records
-fix: validate tool input schema
-test: cover invalid JWT and role checks
-docs: document phase 3 authentication
-chore: configure Docker Compose PostgreSQL
+git commit -m "feat: add github read-only tool executor"
+git push -u origin feat/github-integration
 ```
 
 ---
@@ -1903,7 +1164,8 @@ Phase 0: Complete
 Phase 1: Complete
 Phase 2: Complete
 Phase 3: Complete
-Phase 4: Ready to begin
+Phase 4: Complete
+Phase 5: Ready to begin — GitHub live integration
 ```
 
-The next milestone is the **Invocation Gateway**: a policy-controlled, audited path that allows an authenticated caller to invoke a registered low-risk tool through the MCP Gateway.
+The next milestone is the **first live integration**: a GitHub read-only executor behind the existing invocation gateway, with real tool results flowing through the same policy, schema-validation, and audit pipeline proven in Phase 4.
