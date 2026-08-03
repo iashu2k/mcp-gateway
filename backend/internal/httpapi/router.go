@@ -54,7 +54,10 @@ func NewRouter(
 	)
 
 	schemaValidator := service.NewJSONSchemaValidator()
-	toolExecutor := executor.NewMockExecutor()
+	toolExecutor := executor.NewRouterExecutor(
+		executor.NewMockExecutor(),
+		executor.NewGitHubExecutor(cfg.GitHubToken),
+	)
 
 	invocationService := service.NewInvocationService(
 		invocationRepository,
@@ -84,7 +87,7 @@ func NewRouter(
 	router.Use(middleware.Recoverer)
 	router.Use(requestLogger(logger))
 	router.Use(middleware.Timeout(15 * time.Second))
-	router.Use(middleware.StripSlashes)
+	// router.Use(middleware.StripSlashes)
 
 	router.Get("/health", Handler{DB: db}.Health)
 

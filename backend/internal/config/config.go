@@ -13,6 +13,7 @@ type Config struct {
 	JWTSecret     string
 	JWTIssuer     string
 	JWTTTLMinutes int
+	GitHubToken   string
 }
 
 func Load() (Config, error) {
@@ -51,6 +52,7 @@ func Load() (Config, error) {
 		JWTSecret:     jwtSecret,
 		JWTIssuer:     getEnv("JWT_ISSUER", "mcp-gateway"),
 		JWTTTLMinutes: jwtTTLMinutes,
+		GitHubToken:   os.Getenv("GITHUB_TOKEN"),
 	}, nil
 }
 
