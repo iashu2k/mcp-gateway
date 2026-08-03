@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/iashu2k/mcp-gateway/backend/internal/domain"
 	"github.com/iashu2k/mcp-gateway/backend/internal/executor"
+	"github.com/iashu2k/mcp-gateway/backend/internal/observability"
 )
 
 var (
@@ -89,6 +92,7 @@ func (s *InvocationService) Invoke(
 	toolID string,
 	request domain.InvokeToolRequest,
 ) (domain.ToolInvocationResponse, error) {
+	// Role check
 	if user.Role != domain.RoleAdmin && user.Role != domain.RoleDeveloper {
 		return domain.ToolInvocationResponse{}, ErrInvocationForbidden
 	}
@@ -150,6 +154,7 @@ func (s *InvocationService) Invoke(
 		return domain.ToolInvocationResponse{}, err
 	}
 
+	// Create audit record
 	invocation, err := s.invocations.CreateRunning(ctx, domain.ToolInvocation{
 		ServerID:         server.ID,
 		ToolID:           tool.ID,
@@ -157,15 +162,32 @@ func (s *InvocationService) Invoke(
 		RequestArguments: request.Arguments,
 	})
 	if err != nil {
+		slog.Error("failed to create invocation audit record",
+			"server_id", serverUUID,
+			"tool_id", toolUUID,
+			"user_id", user.ID,
+			"error", err,
+		)
 		return domain.ToolInvocationResponse{}, err
 	}
 
+	slog.Info("tool invocation started",
+		"invocation_id", invocation.ID,
+		"server_id", server.ID,
+		"server_name", server.Name,
+		"tool_id", tool.ID,
+		"tool_name", tool.Name,
+		"user_id", user.ID,
+	)
+
 	startedAt := s.now()
 
+	// Execute tool
 	result, err := s.executor.Execute(ctx, server, tool, request.Arguments)
 
 	completedAt := s.now().UTC()
-	durationMS := completedAt.Sub(startedAt).Milliseconds()
+	duration := completedAt.Sub(startedAt)
+	durationMS := duration.Milliseconds()
 
 	if err != nil {
 		failed, markErr := s.invocations.MarkFailed(
@@ -177,16 +199,53 @@ func (s *InvocationService) Invoke(
 			completedAt,
 		)
 		if markErr != nil {
+			slog.Error("failed to record invocation failure",
+				"invocation_id", invocation.ID,
+				"error", markErr,
+			)
 			return domain.ToolInvocationResponse{}, fmt.Errorf(
 				"record failed invocation: %w",
 				markErr,
 			)
 		}
 
-		return invocationResponse(failed, tool.Name), fmt.Errorf(
-			"execute tool: %w",
-			err,
+		slog.Error("tool execution failed",
+			"invocation_id", invocation.ID,
+			"server_name", server.Name,
+			"tool_name", tool.Name,
+			"duration_ms", durationMS,
+			"error", err,
 		)
+
+		// Metrics
+		observability.InvocationsTotal.WithLabelValues(
+			server.Name,
+			tool.Name,
+			"failed",
+		).Inc()
+
+		observability.InvocationDuration.WithLabelValues(
+			server.Name,
+			tool.Name,
+		).Observe(duration.Seconds())
+
+		// Track upstream errors separately
+		if server.Name == "github" {
+			observability.UpstreamRequestsTotal.WithLabelValues(
+				"github",
+				"error",
+			).Inc()
+		}
+
+		return domain.ToolInvocationResponse{
+			InvocationID: failed.ID,
+			ServerID:     failed.ServerID,
+			ToolID:       failed.ToolID,
+			ToolName:     tool.Name,
+			Status:       failed.Status,
+			DurationMS:   failed.DurationMS,
+			CompletedAt:  failed.CompletedAt,
+		}, nil
 	}
 
 	succeeded, err := s.invocations.MarkSucceeded(
@@ -197,10 +256,42 @@ func (s *InvocationService) Invoke(
 		completedAt,
 	)
 	if err != nil {
+		slog.Error("failed to record invocation success",
+			"invocation_id", invocation.ID,
+			"error", err,
+		)
 		return domain.ToolInvocationResponse{}, fmt.Errorf(
 			"record successful invocation: %w",
 			err,
 		)
+	}
+
+	slog.Info("tool invocation completed",
+		"invocation_id", invocation.ID,
+		"server_name", server.Name,
+		"tool_name", tool.Name,
+		"status", "succeeded",
+		"duration_ms", durationMS,
+	)
+
+	// Metrics
+	observability.InvocationsTotal.WithLabelValues(
+		server.Name,
+		tool.Name,
+		"succeeded",
+	).Inc()
+
+	observability.InvocationDuration.WithLabelValues(
+		server.Name,
+		tool.Name,
+	).Observe(duration.Seconds())
+
+	// Track upstream success
+	if server.Name == "github" {
+		observability.UpstreamRequestsTotal.WithLabelValues(
+			"github",
+			"success",
+		).Inc()
 	}
 
 	return invocationResponse(succeeded, tool.Name), nil

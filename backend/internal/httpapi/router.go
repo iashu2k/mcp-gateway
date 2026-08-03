@@ -3,18 +3,21 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/iashu2k/mcp-gateway/backend/internal/auth"
 	"github.com/iashu2k/mcp-gateway/backend/internal/config"
 	"github.com/iashu2k/mcp-gateway/backend/internal/domain"
 	"github.com/iashu2k/mcp-gateway/backend/internal/executor"
+	"github.com/iashu2k/mcp-gateway/backend/internal/observability"
 	"github.com/iashu2k/mcp-gateway/backend/internal/repository"
 	"github.com/iashu2k/mcp-gateway/backend/internal/service"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func NewRouter(
@@ -54,6 +57,7 @@ func NewRouter(
 	)
 
 	schemaValidator := service.NewJSONSchemaValidator()
+
 	toolExecutor := executor.NewRouterExecutor(
 		executor.NewMockExecutor(),
 		executor.NewGitHubExecutor(cfg.GitHubToken),
@@ -67,6 +71,8 @@ func NewRouter(
 		toolExecutor,
 	)
 
+	invocationHistoryService := service.NewInvocationHistoryService(invocationRepository)
+
 	// -------------------------------------------------------------------------
 	// HTTP handlers
 	// -------------------------------------------------------------------------
@@ -75,6 +81,7 @@ func NewRouter(
 	serverHandler := NewServerHandler(serverService)
 	toolHandler := NewToolHandler(toolService)
 	invocationHandler := NewInvocationHandler(invocationService)
+	invocationHistoryHandler := NewInvocationHistoryHandler(invocationHistoryService)
 
 	// -------------------------------------------------------------------------
 	// Router and global middleware
@@ -87,9 +94,11 @@ func NewRouter(
 	router.Use(middleware.Recoverer)
 	router.Use(requestLogger(logger))
 	router.Use(middleware.Timeout(15 * time.Second))
-	// router.Use(middleware.StripSlashes)
 
 	router.Get("/health", Handler{DB: db}.Health)
+
+	// Metrics endpoint (public for Prometheus scraping)
+	router.Get("/metrics", promhttp.Handler().ServeHTTP)
 
 	// -------------------------------------------------------------------------
 	// API v1 routes
@@ -148,6 +157,12 @@ func NewRouter(
 					)
 				})
 			})
+
+			// Phase 6: Invocation history
+			r.Route("/invocations", func(r chi.Router) {
+				r.Get("/", invocationHistoryHandler.List)
+				r.Get("/{invocationID}", invocationHistoryHandler.GetByID)
+			})
 		})
 	})
 
@@ -168,14 +183,91 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				status = http.StatusOK
 			}
 
+			duration := time.Since(start)
+
+			// Structured log
 			logger.Info("http request completed",
 				"request_id", middleware.GetReqID(r.Context()),
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", status,
 				"bytes", ww.BytesWritten(),
-				"duration_ms", time.Since(start).Milliseconds(),
+				"duration_ms", duration.Milliseconds(),
 			)
+
+			// Prometheus metrics
+			observability.HTTPRequestsTotal.WithLabelValues(
+				r.Method,
+				normalizePath(r.URL.Path),
+				strconv.Itoa(status),
+			).Inc()
+
+			observability.HTTPRequestDuration.WithLabelValues(
+				r.Method,
+				normalizePath(r.URL.Path),
+			).Observe(duration.Seconds())
 		})
 	}
+}
+
+// normalizePath reduces path cardinality for metrics by replacing UUIDs with placeholders.
+func normalizePath(path string) string {
+	// Replace UUIDs with placeholder to avoid high cardinality in metrics
+	// Pattern: /api/v1/servers/{uuid}/tools/{uuid}/invoke -> /api/v1/servers/:id/tools/:id/invoke
+	segments := splitPath(path)
+	for i, seg := range segments {
+		if isUUID(seg) {
+			segments[i] = ":id"
+		}
+	}
+	return joinPath(segments)
+}
+
+func splitPath(path string) []string {
+	var segments []string
+	current := ""
+	for _, c := range path {
+		if c == '/' {
+			if current != "" {
+				segments = append(segments, current)
+				current = ""
+			}
+		} else {
+			current += string(c)
+		}
+	}
+	if current != "" {
+		segments = append(segments, current)
+	}
+	return segments
+}
+
+func joinPath(segments []string) string {
+	if len(segments) == 0 {
+		return "/"
+	}
+	result := ""
+	for _, seg := range segments {
+		result += "/" + seg
+	}
+	return result
+}
+
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
 }

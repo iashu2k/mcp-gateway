@@ -194,3 +194,127 @@ func scanInvocation(row rowScanner) (domain.ToolInvocation, error) {
 
 	return invocation, err
 }
+
+// List returns invocation history with optional filtering.
+func (r *InvocationRepository) List(
+	ctx context.Context,
+	serverID *uuid.UUID,
+	toolID *uuid.UUID,
+	userID *uuid.UUID,
+	status string,
+	limit int,
+	offset int,
+) ([]domain.ToolInvocation, error) {
+	query := `
+		SELECT
+			id,
+			server_id,
+			tool_id,
+			user_id,
+			status,
+			request_arguments,
+			response_payload,
+			error_code,
+			error_message,
+			duration_ms,
+			created_at,
+			completed_at
+		FROM tool_invocations
+		WHERE 1=1
+	`
+
+	args := []any{}
+	argPos := 1
+
+	if serverID != nil {
+		query += fmt.Sprintf(" AND server_id = $%d", argPos)
+		args = append(args, *serverID)
+		argPos++
+	}
+
+	if toolID != nil {
+		query += fmt.Sprintf(" AND tool_id = $%d", argPos)
+		args = append(args, *toolID)
+		argPos++
+	}
+
+	if userID != nil {
+		query += fmt.Sprintf(" AND user_id = $%d", argPos)
+		args = append(args, *userID)
+		argPos++
+	}
+
+	if status != "" {
+		query += fmt.Sprintf(" AND status = $%d", argPos)
+		args = append(args, status)
+		argPos++
+	}
+
+	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", argPos, argPos+1)
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list invocations: %w", err)
+	}
+	defer rows.Close()
+
+	invocations := []domain.ToolInvocation{}
+	for rows.Next() {
+		var inv domain.ToolInvocation
+		err := rows.Scan(
+			&inv.ID,
+			&inv.ServerID,
+			&inv.ToolID,
+			&inv.UserID,
+			&inv.Status,
+			&inv.RequestArguments,
+			&inv.ResponsePayload,
+			&inv.ErrorCode,
+			&inv.ErrorMessage,
+			&inv.DurationMS,
+			&inv.CreatedAt,
+			&inv.CompletedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan invocation: %w", err)
+		}
+		invocations = append(invocations, inv)
+	}
+
+	return invocations, rows.Err()
+}
+
+// GetByID returns a single invocation by ID.
+func (r *InvocationRepository) GetByID(
+	ctx context.Context,
+	id uuid.UUID,
+) (domain.ToolInvocation, error) {
+	const query = `
+		SELECT
+			id,
+			server_id,
+			tool_id,
+			user_id,
+			status,
+			request_arguments,
+			response_payload,
+			error_code,
+			error_message,
+			duration_ms,
+			created_at,
+			completed_at
+		FROM tool_invocations
+		WHERE id = $1
+	`
+
+	inv, err := scanInvocation(r.db.QueryRow(ctx, query, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ToolInvocation{}, ErrInvocationNotFound
+	}
+	if err != nil {
+		return domain.ToolInvocation{}, fmt.Errorf("get invocation: %w", err)
+	}
+
+	return inv, nil
+}
