@@ -4,7 +4,7 @@ A self-hosted MCP Gateway for centrally registering, discovering, governing, and
 
 The project is inspired by the idea of an internal “USB-C for AI agents”: a unified platform where developers and AI agents can discover approved Model Context Protocol (MCP) servers, inspect their tools, invoke approved capabilities through centralized controls, and obtain audit-ready execution history.
 
-> **Current status:** Phase 4 complete — Server Registry, Tool Catalog, JWT authentication, RBAC, and a policy-controlled, audited tool-invocation gateway are implemented and verified locally.
+> **Current status:** Phase 5 complete — the gateway now executes live GitHub REST API calls through the same policy-controlled, audited pipeline proven in Phase 4.
 
 ---
 
@@ -29,6 +29,7 @@ The project is inspired by the idea of an internal “USB-C for AI agents”: a 
 - [Phase 2: MCP Tool Catalog](#phase-2-mcp-tool-catalog)
 - [Phase 3: Authentication and RBAC](#phase-3-authentication-and-rbac)
 - [Phase 4: Invocation Gateway](#phase-4-invocation-gateway)
+- [Phase 5: Live GitHub Integration](#phase-5-live-github-integration)
 - [Validation and Testing](#validation-and-testing)
 - [Design Decisions](#design-decisions)
 - [Known Limitations](#known-limitations)
@@ -65,12 +66,13 @@ MCP Gateway addresses this by acting as a secure control plane for internal MCP 
 │                                                                 │
 │ Server Registry -  Tool Catalog -  JWT Auth -  RBAC               │
 │ Invocation Gateway -  JSON Schema Validation -  Audit Records    │
+│ Live GitHub Executor -  Mock Executor -  Upstream Error Capture  │
 └─────────────┬──────────────────┬──────────────────┬─────────────┘
               │                  │                  │
               ▼                  ▼                  ▼
       ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
-      │ GitHub MCP    │  │ Jira MCP      │  │ Slack MCP     │
-      │ Server/API    │  │ Server/API    │  │ Server/API    │
+      │ GitHub REST   │  │ Jira MCP      │  │ Slack MCP     │
+      │ API (live)    │  │ Server/API    │  │ Server/API    │
       └───────────────┘  └───────────────┘  └───────────────┘
               │
               ▼
@@ -96,7 +98,9 @@ It focuses on:
 - JWT authentication
 - Role-based access control
 - Policy-controlled tool invocation
-- Durable invocation audit records
+- **Live third-party API integration (GitHub REST)**
+- Executor routing and abstraction
+- Durable invocation audit records with upstream error capture
 - Secure password handling
 - Structured request logging with status codes
 - Containerized local development
@@ -113,6 +117,8 @@ Go Gateway
 ├── Argument validation
 ├── Policy checks
 ├── Tool routing and execution
+│   ├── Mock executor (deterministic testing)
+│   └── Live API executors (GitHub, future Jira/Slack)
 ├── Audit logging
 └── Observability
 
@@ -150,7 +156,10 @@ Developer / API Client
 │ Tool Catalog API                     │
 │ Invocation API                       │
 │ JSON Schema argument validation      │
-│ In-process mock tool executor        │
+│                                      │
+│ Executor Router                      │
+│ ├── MockExecutor (in-process)        │
+│ └── GitHubExecutor (live REST API)   │
 └────────────────┬─────────────────────┘
                  │
                  │ pgx connection pool
@@ -166,7 +175,7 @@ Developer / API Client
 └──────────────────────────────────────┘
 ```
 
-### Invocation request flow
+### Invocation request flow (Phase 5)
 
 ```text
 POST /api/v1/servers/{serverID}/tools/{toolID}/invoke
@@ -184,7 +193,7 @@ Load server — must exist and be active
 Load tool — must exist and be enabled
         │
         ▼
-Policy check — only low-risk tools in Phase 4
+Policy check — only low-risk tools
         │
         ▼
 Validate arguments against stored JSON Schema
@@ -193,10 +202,14 @@ Validate arguments against stored JSON Schema
 Create tool_invocations audit record (status: running)
         │
         ▼
-Execute via registered mock executor
+RouterExecutor dispatches by server name:
+    ├── "github"  → GitHubExecutor → live GitHub REST API
+    └── others    → MockExecutor   → deterministic mock
         │
         ▼
 Update audit record: succeeded or failed
+    ├── success → response_payload, duration_ms, completed_at
+    └── failure → error_code, error_message (upstream errors captured)
         │
         ▼
 Return structured invocation response
@@ -216,11 +229,15 @@ Go MCP Gateway API
 ├── Server and Tool Permissions
 ├── Policy Engine
 ├── Tool Invocation Proxy
+│   ├── GitHub REST Executor (live)
+│   ├── Jira Executor (planned)
+│   ├── Slack Executor (planned)
+│   └── MCP Client Executor (planned)
 ├── Audit Log Service
 ├── Metrics and Tracing
 └── MCP Client / Adapter Layer
         │
-        ├── GitHub MCP Server or GitHub API adapter
+        ├── GitHub MCP Server or REST API
         ├── Jira MCP Server
         ├── Slack MCP Server
         ├── Confluence MCP Server
@@ -243,6 +260,7 @@ Go MCP Gateway API
 | Authentication | JWT with HS256 | Local development access tokens |
 | JWT library | `github.com/golang-jwt/jwt/v5` | JWT signing, parsing, verification, claims validation |
 | Password hashing | `golang.org/x/crypto/bcrypt` | Password hash generation and comparison |
+| **GitHub integration** | `google/go-github/v62` | Typed Go client for GitHub REST API v3 |
 | Configuration | Environment variables + `godotenv` | Local configuration and secrets loading |
 | Logging | Go `log/slog` + chi `WrapResponseWriter` | Structured logs with request ID, status, bytes, latency |
 | API testing | `curl`, `jq`, Go `testing` | Manual API verification and automated tests |
@@ -289,6 +307,15 @@ Go MCP Gateway API
   - Durable `tool_invocations` audit records with `running → succeeded/failed` lifecycle
   - Deterministic in-process mock executor (`echo`, `list_issues`)
   - Audit foreign keys using `ON DELETE RESTRICT` to preserve accountability history
+- **Phase 5: live GitHub REST integration**
+  - Real GitHub REST API executor for public repositories
+  - Executor routing: `github` servers hit live API, others use mock executor
+  - `list_issues` tool with live GitHub data
+  - `search_repositories` tool with live GitHub data
+  - Slimmed response payloads (only essential fields stored in audit)
+  - Upstream error capture in audit records (`error_code: execution_failed`)
+  - Unauthenticated access (60 req/hr) or token-based (5000 req/hr)
+  - Same policy chain: auth → role → server/tool state → risk → schema → audit → execute
 - Unit tests for server, tool, JWT, auth middleware, and invocation service behavior
 
 ### Not yet implemented
@@ -296,10 +323,11 @@ Go MCP Gateway API
 - OAuth/OIDC identity-provider integration
 - Server-level and tool-level per-user permissions
 - Medium/high-risk invocation confirmation flows
-- Real MCP transport or external API invocation
-- GitHub/Jira/Slack/Confluence live integrations
+- Additional GitHub tools (`get_issue`, `list_pull_requests`, etc.)
+- Jira/Slack/Confluence live integrations
+- MCP protocol transport (stdio/SSE/streamable HTTP)
 - Invocation history list endpoints
-- Credential reference storage
+- Credential reference storage (GitHub token currently env-only)
 - Prometheus metrics and OpenTelemetry traces
 - React UI, CI/CD pipeline, production deployment
 
@@ -314,8 +342,8 @@ Go MCP Gateway API
 | Phase 2 | Complete | MCP Tool Catalog | Per-server tools, input schemas, risk levels, enablement |
 | Phase 3 | Complete | Authentication and RBAC | JWT authentication, local users, bcrypt, role protection |
 | Phase 4 | Complete | Invocation Gateway | Policy-checked, schema-validated, audited mock invocations |
-| Phase 5 | Next | First Live Integration | GitHub read-only invocation through the gateway |
-| Phase 6 | Planned | Observability | Invocation history API, Prometheus metrics, OpenTelemetry traces |
+| Phase 5 | Complete | Live GitHub Integration | Real GitHub REST executor with audit trail |
+| Phase 6 | Next | Observability | Invocation history API, Prometheus metrics, OpenTelemetry traces |
 | Phase 7 | Planned | React UI | Catalog, sandbox, history, and administration |
 | Phase 8 | Planned | Delivery and Polish | CI, containers, deployment, demo, documentation |
 
@@ -347,7 +375,9 @@ mcp-gateway/
 │   │   │   └── user.go
 │   │   │
 │   │   ├── executor/
-│   │   │   └── mock_executor.go
+│   │   │   ├── github_executor.go      # Live GitHub REST API
+│   │   │   ├── mock_executor.go        # Deterministic mock
+│   │   │   └── router_executor.go      # Dispatches by server name
 │   │   │
 │   │   ├── httpapi/
 │   │   │   ├── auth_handler.go
@@ -414,7 +444,7 @@ mcp-gateway/
 | `internal/auth` | JWT claims, signing, parsing, signature verification, expiration validation |
 | `internal/config` | Environment-variable loading and validation |
 | `internal/domain` | Core domain models, request models, constants, response structures |
-| `internal/executor` | Tool execution implementations (currently the deterministic mock executor) |
+| `internal/executor` | Tool execution implementations: mock (deterministic) and GitHub (live REST) |
 | `internal/httpapi` | Routes, handlers, middleware, JSON decoding, responses, HTTP error mapping |
 | `internal/platform/database` | PostgreSQL connection-pool setup and health verification |
 | `internal/repository` | Parameterized SQL and PostgreSQL persistence operations |
@@ -428,9 +458,9 @@ HTTP Handler / Middleware
            ↓
         Service
            ↓
-  Repository / Executor
+  Repository / Executor Router
            ↓
-  PostgreSQL / Mock Tools
+  PostgreSQL / Mock / Live APIs
 ```
 
 ---
@@ -498,6 +528,20 @@ JWT_ISSUER=mcp-gateway
 JWT_TTL_MINUTES=60
 ```
 
+### Configure GitHub integration (optional)
+
+For public repositories, you can run unauthenticated (60 requests/hour). For higher rate limits or private repos, create a fine-grained personal access token with only "Issues: Read" permission:
+
+```dotenv
+GITHUB_TOKEN=github_pat_your_token_here
+```
+
+Leave empty for unauthenticated public access:
+
+```dotenv
+GITHUB_TOKEN=
+```
+
 ### Start PostgreSQL
 
 ```bash
@@ -516,7 +560,7 @@ migrate -path backend/migrations -database "$DATABASE_URL" up
 migrate -path backend/migrations -database "$DATABASE_URL" version
 ```
 
-Expected after Phase 4:
+Expected after Phase 5:
 
 ```text
 4
@@ -572,6 +616,8 @@ DATABASE_URL=postgres://mcp_gateway:mcp_gateway_dev_password@localhost:5432/mcp_
 JWT_SECRET=replace-with-a-long-random-secret
 JWT_ISSUER=mcp-gateway
 JWT_TTL_MINUTES=60
+
+GITHUB_TOKEN=
 ```
 
 | Variable | Required | Description |
@@ -585,6 +631,7 @@ JWT_TTL_MINUTES=60
 | `JWT_SECRET` | Yes | At least 32-character HS256 signing secret |
 | `JWT_ISSUER` | Yes | Expected issuer claim for generated and accepted tokens |
 | `JWT_TTL_MINUTES` | Yes | Access-token lifetime in minutes |
+| `GITHUB_TOKEN` | No | GitHub personal access token (empty = unauthenticated public access) |
 
 `.env` and `scripts/seed_users.sql` are local-only files and must not be committed.
 
@@ -630,8 +677,8 @@ psql "$DATABASE_URL" -c "SELECT id, status, duration_ms FROM tool_invocations OR
 
 | Role | Catalog reads | Catalog mutations | Tool invocation |
 |---|---:|---:|---:|
-| `admin` | Yes | Yes | Yes (low-risk in Phase 4) |
-| `developer` | Yes | No | Yes (low-risk in Phase 4) |
+| `admin` | Yes | Yes | Yes (low-risk in Phase 5) |
+| `developer` | Yes | No | Yes (low-risk in Phase 5) |
 | `viewer` | Yes | No | No |
 | Unauthenticated | No | No | No |
 
@@ -999,6 +1046,211 @@ psql "$DATABASE_URL" -c "
 
 ---
 
+## Phase 5: Live GitHub Integration
+
+**Status:** Complete
+
+### Goal
+
+Replace the mock path for one registered server with a real, read-only GitHub REST integration. The lifecycle proven in Phase 4 — auth → role → policy → schema → audit → execute — stays identical; only the executor gains a second implementation that makes live API calls.
+
+### Architecture
+
+```text
+POST /api/v1/servers/{githubServerID}/tools/list_issues/invoke
+        │
+        ▼
+Same Phase 4 policy chain (auth, role, server/tool state, risk, schema)
+        │
+        ▼
+Create tool_invocations audit record (status: running)
+        │
+        ▼
+RouterExecutor dispatches by server name:
+    ├── "github"  → GitHubExecutor → live GitHub REST API
+    └── others    → MockExecutor   → deterministic mock
+        │
+        ▼
+Live GitHub REST response (or upstream error)
+        │
+        ▼
+Update audit record:
+    ├── succeeded → response_payload (slimmed), duration_ms
+    └── failed    → error_code: execution_failed, error_message (upstream error)
+        │
+        ▼
+Return structured invocation response
+```
+
+### Executor routing
+
+The `RouterExecutor` dispatches to the appropriate executor based on the registered server's `name` field:
+
+| Server name | Executor | Behavior |
+|---|---|---|
+| `github` | `GitHubExecutor` | Makes live GitHub REST API calls using `go-github` |
+| Any other | `MockExecutor` | Returns deterministic mock responses |
+
+This allows you to test both mock and live paths side-by-side without changing any code.
+
+### GitHub executor
+
+Uses `google/go-github/v62` for typed access to the GitHub REST API v3. Authentication is optional:
+
+- **Unauthenticated** (`GITHUB_TOKEN=` empty): 60 requests/hour per IP, public repos only
+- **Authenticated** (`GITHUB_TOKEN=github_pat_...`): 5000 requests/hour, can access private repos (if token has permission)
+
+Supported tools:
+
+| Tool name | Arguments | Live behavior |
+|---|---|---|
+| `list_issues` | `{ "owner", "repo", "state?", "per_page?" }` | Lists issues from a GitHub repository, filtered by state |
+| `search_repositories` | `{ "query", "per_page?" }` | Searches repositories by name, description, or other criteria |
+
+Both tools return slimmed payloads containing only essential fields (number, title, state, user, URL) to keep audit records concise.
+
+### Registering the GitHub server
+
+```bash
+export SERVER_ID="$(
+  curl -s -X POST http://localhost:8080/api/v1/servers \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "name": "github",
+      "description": "Live GitHub REST integration (read-only)",
+      "baseUrl": "https://api.github.com",
+      "transportType": "streamable_http",
+      "ownerTeam": "developer-platform"
+    }' | jq -r '.id'
+)"
+```
+
+**Important:** The server `name` must be exactly `github` for the router to dispatch to the live executor.
+
+### Registering the `list_issues` tool
+
+```bash
+export TOOL_ID="$(
+  curl -s -X POST "http://localhost:8080/api/v1/servers/$SERVER_ID/tools/" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "name": "list_issues",
+      "title": "List GitHub Issues",
+      "description": "Lists issues from a GitHub repository (live API)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "owner":    { "type": "string", "minLength": 1 },
+          "repo":     { "type": "string", "minLength": 1 },
+          "state":    { "type": "string", "enum": ["open", "closed", "all"] },
+          "per_page": { "type": "integer", "minimum": 1, "maximum": 100 }
+        },
+        "required": ["owner", "repo"],
+        "additionalProperties": false
+      },
+      "riskLevel": "low",
+      "enabled": true
+    }' | jq -r '.id'
+)"
+```
+
+### Invoking a live GitHub tool
+
+```bash
+curl -s -X POST \
+  "http://localhost:8080/api/v1/servers/$SERVER_ID/tools/$TOOL_ID/invoke" \
+  -H "Authorization: Bearer $DEVELOPER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "arguments": {
+      "owner": "golang",
+      "repo": "go",
+      "state": "open",
+      "per_page": 5
+    }
+  }' | jq
+```
+
+Verified response:
+
+```json
+{
+  "invocationId": "cb112ed5-92fc-488a-80d6-e60be4af1e7f",
+  "serverId": "c3b00a6e-78b3-4e8d-b40f-dc7e6149625d",
+  "toolId": "2d81df9b-b69a-41a1-9fe9-3c1535ce8b62",
+  "toolName": "list_issues",
+  "status": "succeeded",
+  "result": {
+    "count": 4,
+    "state": "open",
+    "issues": [
+      {
+        "url": "https://github.com/golang/go/issues/80703",
+        "user": "jkrishmys",
+        "state": "open",
+        "title": "x/build: gotip-linux-ppc64le_power8 tasks expire after OSU POWER8 hardware retirement",
+        "number": 80703
+      }
+    ],
+    "repository": "golang/go"
+  },
+  "durationMs": 404,
+  "completedAt": "2026-08-03T17:46:38.835182-04:00"
+}
+```
+
+### Error handling
+
+**Upstream errors** (e.g., repository not found, rate limit exceeded) are captured in the audit record:
+
+```bash
+psql "$DATABASE_URL" -c "
+  SELECT status, error_code, error_message
+  FROM tool_invocations
+  ORDER BY created_at DESC LIMIT 1;
+"
+```
+
+Expected for a bad repo:
+
+```text
+status: failed
+error_code: execution_failed
+error_message: github upstream request failed: GET https://api.github.com/repos/...: 404 Not Found
+```
+
+The API returns a generic `invocation_failed` error to the client (security best practice), but the full upstream error is preserved in the audit trail.
+
+### Rate limiting
+
+Without a token, GitHub allows 60 requests/hour per IP address. If you exceed this:
+
+```text
+status: failed
+error_code: execution_failed
+error_message: github upstream request failed: GET ...: 403 API rate limit exceeded
+```
+
+To increase the limit to 5000 requests/hour, create a fine-grained personal access token with only "Issues: Read" permission and set `GITHUB_TOKEN` in `.env`.
+
+### Phase 5 acceptance criteria
+
+- [x] `GitHubExecutor` makes live GitHub REST API calls using `go-github`
+- [x] `RouterExecutor` dispatches to GitHub executor for servers named `github`
+- [x] `list_issues` tool returns real GitHub issue data
+- [x] `search_repositories` tool returns real GitHub repository data
+- [x] Response payloads are slimmed (only essential fields stored)
+- [x] Upstream errors are captured in audit records
+- [x] Unauthenticated access works for public repos (60 req/hr)
+- [x] Token-based access works for higher rate limits (5000 req/hr)
+- [x] Mock executor still works for non-GitHub servers
+- [x] Same policy chain applies (auth, role, server/tool state, risk, schema)
+- [x] `go test ./...` and `go vet ./...` pass
+
+---
+
 ## Validation and Testing
 
 ```bash
@@ -1010,7 +1262,7 @@ go test ./...
 go vet ./...
 ```
 
-### Invocation smoke test
+### Invocation smoke test (mock)
 
 ```bash
 curl -s -X POST \
@@ -1020,12 +1272,29 @@ curl -s -X POST \
   -d '{"arguments": {"message": "smoke test"}}' | jq
 ```
 
+### Invocation smoke test (live GitHub)
+
+```bash
+curl -s -X POST \
+  "http://localhost:8080/api/v1/servers/$SERVER_ID/tools/$TOOL_ID/invoke" \
+  -H "Authorization: Bearer $DEVELOPER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "arguments": {
+      "owner": "golang",
+      "repo": "go",
+      "state": "open",
+      "per_page": 3
+    }
+  }' | jq
+```
+
 ### Structured request logging
 
 Every request logs method, path, request ID, status, bytes, and duration:
 
 ```json
-{"time":"...","level":"INFO","msg":"http request completed","request_id":"...","method":"POST","path":"/api/v1/servers/.../invoke","status":200,"bytes":312,"duration_ms":9}
+{"time":"...","level":"INFO","msg":"http request completed","request_id":"...","method":"POST","path":"/api/v1/servers/.../invoke","status":200,"bytes":312,"duration_ms":404}
 ```
 
 Status capture uses chi's `middleware.NewWrapResponseWriter`; a status of `0` (handler never wrote one explicitly) is logged as `200`.
@@ -1034,81 +1303,132 @@ Status capture uses chi's `middleware.NewWrapResponseWriter`; a status of `0` (h
 
 ## Design Decisions
 
-### Why a mock executor before live integrations
+### Why executor routing by server name
 
-The invocation path has many failure modes — authentication, authorization, policy, schema validation, audit persistence — that are independent of any third-party API. Proving them against a deterministic executor means Phase 5's GitHub integration only adds one new variable: the external call itself.
+The `RouterExecutor` dispatches based on the registered server's `name` field. This allows you to:
 
-### Why `ON DELETE RESTRICT` for audit records
+- Test mock and live paths side-by-side without code changes
+- Add new integrations (Jira, Slack, etc.) by creating new executor implementations
+- Keep the same policy chain and audit trail for all executors
 
-Server/tool deletion cascades made sense for the catalog (`mcp_tools` → `mcp_servers`), because orphaned catalog rows are useless. Audit rows are the opposite: they are the record of what happened, so deleting referenced resources is blocked rather than silently erasing history.
+Alternative approaches considered:
 
-### Why validate arguments against stored schemas
+- **Server type field:** Requires schema change and migration
+- **Base URL pattern matching:** Fragile and less explicit
+- **Executor registry:** More complex, adds indirection
 
-The gateway is the policy boundary. Validating arguments against each tool's stored `inputSchema` guarantees that every invocation — and its audit record — contains exactly the shape the tool declared, before any executor or external system sees it.
+Server name routing is simple, explicit, and sufficient for the current phase. A future phase may introduce a `server_type` field for more robust routing.
 
-### Why `jsonschema/v6`
+### Why slim response payloads
 
-Draft 2020-12 support, active maintenance, and a compiled-schema API that maps cleanly onto stored `jsonb` documents. Schemas are parsed once per invocation via `jsonschema.UnmarshalJSON`; a compiled-schema cache is a Phase 6 optimization.
+The GitHub API returns full issue objects with dozens of fields. Storing all of this in the audit table would:
+
+- Waste database space
+- Make audit queries slower
+- Potentially store sensitive data (e.g., user emails, private repo metadata)
+
+The executor slims responses to only essential fields (number, title, state, user, URL) before persisting to `tool_invocations.response_payload`.
+
+### Why capture upstream errors in audit records
+
+When a GitHub API call fails (404, rate limit, network error), the gateway returns a generic `invocation_failed` error to the client (security best practice). However, the full upstream error message is preserved in the audit record's `error_message` field.
+
+This allows operators to:
+
+- Debug integration issues without exposing internals to API clients
+- Track upstream reliability (how often does GitHub fail?)
+- Correlate failures with specific repos, users, or rate limits
+
+### Why `google/go-github` instead of raw HTTP
+
+`go-github` provides:
+
+- Typed Go structs for all GitHub API responses
+- Automatic pagination handling
+- Built-in rate limit detection
+- Context support for timeouts and cancellation
+- Active maintenance and community support
+
+Raw HTTP would require manual JSON parsing, error handling, and pagination logic — all of which `go-github` handles correctly.
 
 ---
 
 ## Known Limitations
 
-Intentional at the end of Phase 4:
+Intentional at the end of Phase 5:
 
-- Invocation executes against an in-process mock, not real MCP servers or APIs.
-- Only `low` risk tools are invocable; no confirmation flow exists for medium/high.
-- Roles are global; no per-server or per-tool user permissions.
-- No invocation history list endpoints yet (query PostgreSQL directly).
-- Failed invocations return a generic API error; details live in the audit row and logs.
-- Schema compilation happens per request (no cache).
-- No metrics, tracing, or rate limiting.
-- No OAuth/OIDC, refresh tokens, or token revocation.
-- No React UI, CI/CD, or deployment.
+- Only two GitHub tools (`list_issues`, `search_repositories`); no `get_issue`, `list_pull_requests`, etc.
+- GitHub token stored in environment variable, not a credential reference store
+- No rate limit tracking or backoff logic (relies on GitHub's 403 response)
+- Only `low` risk tools are invocable; no confirmation flow exists for medium/high
+- Roles are global; no per-server or per-tool user permissions
+- No invocation history list endpoints yet (query PostgreSQL directly)
+- Failed invocations return a generic API error; details live in the audit row and logs
+- Schema compilation happens per request (no cache)
+- No metrics, tracing, or rate limiting
+- No OAuth/OIDC, refresh tokens, or token revocation
+- No React UI, CI/CD, or deployment
+- No MCP protocol transport (stdio/SSE/streamable HTTP); all integrations are direct REST API calls
 
 ---
 
 ## Planned Phases
 
-### Phase 5: First Live Integration (Next)
+### Phase 6: Observability (Next)
 
-Replace the mock path for one server with a real GitHub read-only adapter:
+Add visibility into the invocation pipeline:
 
-- `search_repositories`, `list_issues`, `get_issue`
-- GitHub token via environment variable, never stored in the database
-- Executor selection by server type (`mock` vs `github`)
-- External call latency and errors recorded in the same audit table
-
-### Phase 6: Observability
-
-- Invocation history list/detail endpoints
-- Prometheus metrics (`/metrics`)
-- OpenTelemetry traces across the invocation chain
-- Tool success/error rates and p95 latency
+- **Invocation history endpoints:** `GET /api/v1/invocations` with filtering by server, tool, user, status, date range
+- **Prometheus metrics:** `/metrics` endpoint with request counts, latencies, error rates per tool
+- **OpenTelemetry traces:** Distributed tracing across the invocation chain (auth → policy → schema → executor → audit)
+- **Health checks:** Server health status based on recent invocation success rates
 
 ### Phase 7: React UI
 
-Catalog, tool detail with schema viewer, JSON invocation sandbox, invocation history, admin management.
+Build the discovery and sandbox interface:
+
+- MCP server catalog with search and filtering
+- Tool detail pages with input schema viewer
+- JSON invocation sandbox with live results
+- Invocation history with filtering and export
+- Admin management (users, servers, tools)
+- Observability dashboard (metrics, traces, health)
 
 ### Phase 8: Delivery and Polish
 
-GitHub Actions CI, Dockerfiles, Testcontainers integration tests, OpenAPI docs, deployment, demo video.
+Prepare for production deployment:
+
+- GitHub Actions CI (test, lint, build)
+- Backend and frontend Dockerfiles
+- Integration tests using Testcontainers
+- OpenAPI documentation
+- Cloud deployment (AWS/GCP/Azure)
+- Architecture decision records
+- Demo video and screenshots
+- Security and operations documentation
 
 ---
 
 ## Troubleshooting
 
-### Invocation returns `invocation_failed` with no audit row
+### GitHub API returns 403 rate limit exceeded
 
-The failure occurred before the audit insert: check the backend terminal — the handler logs the root cause via `slog.Error("tool invocation failed", ...)`. A known cause was passing an `io.Reader` to `jsonschema/v6` `AddResource`; use `jsonschema.UnmarshalJSON` to decode documents first.
+You've exceeded the unauthenticated limit (60 requests/hour). Either:
+
+1. Wait for the rate limit to reset (check `X-RateLimit-Reset` header in the error)
+2. Create a fine-grained personal access token and set `GITHUB_TOKEN` in `.env`
+
+### GitHub API returns 404 for a public repo
+
+The repo may be private, or the owner/repo name may be incorrect. GitHub returns 404 (not 403) for private repos when unauthenticated to avoid leaking their existence.
+
+### Route returns 404 for tool endpoints
+
+Trailing-slash mismatch. If routes are registered as `/{serverID}/tools/`, you must call `.../tools/` (with trailing slash). Alternatively, add `middleware.StripSlashes` to the router and register routes without trailing slashes.
 
 ### `compile tool input schema ... invalid jsonType *bytes.Reader`
 
-You are on `jsonschema/v6` but using the v5 `AddResource(url, io.Reader)` pattern. See the v6-compatible `schema_validator.go` described in Phase 4.
-
-### Route returns 404 / non-JSON response on tool creation
-
-Trailing-slash mismatch. `r.Post("/{serverID}/tools/", ...)` matches `.../tools/`, not `.../tools`. Either call the trailing-slash URL or add `middleware.StripSlashes` to the router.
+You are on `jsonschema/v6` but using the v5 `AddResource(url, io.Reader)` pattern. Use `jsonschema.UnmarshalJSON` to decode documents before passing to `AddResource`.
 
 ### Request logs lack status codes
 
@@ -1141,7 +1461,7 @@ migrate -path backend/migrations -database "$DATABASE_URL" up
 ## Contributing Workflow
 
 ```bash
-git checkout -b feat/github-integration
+git checkout -b feat/jira-integration
 
 cd backend
 gofmt -w .
@@ -1151,8 +1471,19 @@ go vet ./...
 
 cd ..
 git add .
-git commit -m "feat: add github read-only tool executor"
-git push -u origin feat/github-integration
+git commit -m "feat: add jira read-only tool executor"
+git push -u origin feat/jira-integration
+```
+
+Suggested commit convention:
+
+```text
+feat: add live GitHub REST integration
+feat: add jira read-only tool executor
+fix: validate tool input schema
+test: cover invalid JWT and role checks
+docs: document phase 5 github integration
+chore: configure Docker Compose PostgreSQL
 ```
 
 ---
@@ -1165,7 +1496,98 @@ Phase 1: Complete
 Phase 2: Complete
 Phase 3: Complete
 Phase 4: Complete
-Phase 5: Ready to begin — GitHub live integration
+Phase 5: Complete
+Phase 6: Ready to begin — Observability
 ```
 
-The next milestone is the **first live integration**: a GitHub read-only executor behind the existing invocation gateway, with real tool results flowing through the same policy, schema-validation, and audit pipeline proven in Phase 4.
+The next milestone is **Observability**: invocation history endpoints, Prometheus metrics, and OpenTelemetry traces to make the gateway's behavior visible and measurable.
+
+---
+
+## Demo: Live GitHub Integration
+
+Here's a complete walkthrough of the Phase 5 live integration:
+
+### 1. Register the GitHub server
+
+```bash
+export GITHUB_SERVER_ID="$(
+  curl -s -X POST http://localhost:8080/api/v1/servers \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "name": "github",
+      "description": "Live GitHub REST integration",
+      "baseUrl": "https://api.github.com",
+      "transportType": "streamable_http",
+      "ownerTeam": "developer-platform"
+    }' | jq -r '.id'
+)"
+```
+
+### 2. Register the `list_issues` tool
+
+```bash
+export LIST_ISSUES_TOOL_ID="$(
+  curl -s -X POST "http://localhost:8080/api/v1/servers/$GITHUB_SERVER_ID/tools/" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "name": "list_issues",
+      "title": "List GitHub Issues",
+      "description": "Lists issues from a GitHub repository",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "owner":    { "type": "string", "minLength": 1 },
+          "repo":     { "type": "string", "minLength": 1 },
+          "state":    { "type": "string", "enum": ["open", "closed", "all"] },
+          "per_page": { "type": "integer", "minimum": 1, "maximum": 100 }
+        },
+        "required": ["owner", "repo"],
+        "additionalProperties": false
+      },
+      "riskLevel": "low",
+      "enabled": true
+    }' | jq -r '.id'
+)"
+```
+
+### 3. Invoke the live tool
+
+```bash
+curl -s -X POST \
+  "http://localhost:8080/api/v1/servers/$GITHUB_SERVER_ID/tools/$LIST_ISSUES_TOOL_ID/invoke" \
+  -H "Authorization: Bearer $DEVELOPER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "arguments": {
+      "owner": "golang",
+      "repo": "go",
+      "state": "open",
+      "per_page": 3
+    }
+  }' | jq
+```
+
+### 4. Verify the audit trail
+
+```bash
+psql "$DATABASE_URL" -c "
+  SELECT 
+    ti.status,
+    s.name AS server,
+    t.name AS tool,
+    ti.duration_ms,
+    ti.response_payload->'count' AS issue_count,
+    ti.created_at
+  FROM tool_invocations ti
+  JOIN mcp_servers s ON s.id = ti.server_id
+  JOIN mcp_tools t ON t.id = ti.tool_id
+  WHERE s.name = 'github'
+  ORDER BY ti.created_at DESC
+  LIMIT 5;
+"
+```
+
+This demonstrates the complete flow: authentication → authorization → policy → schema validation → live API call → audit persistence — all working end-to-end with real GitHub data.
