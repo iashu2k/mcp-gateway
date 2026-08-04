@@ -1,6 +1,13 @@
 import { Outlet, Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { LogOut, Server, History, Settings, Activity } from "lucide-react";
+import {
+  LogOut,
+  Server,
+  History,
+  Settings,
+  Activity,
+  User2,
+} from "lucide-react";
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -37,6 +44,13 @@ export default function Layout() {
                 >
                   <Activity className="h-4 w-4 mr-1" />
                   Metrics
+                </Link>
+                <Link
+                  to="/profile"
+                  className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-900 hover:text-indigo-600"
+                >
+                  <User2 className="h-4 w-4 mr-1" />
+                  Profile
                 </Link>
                 <Link
                   to="/invocations"

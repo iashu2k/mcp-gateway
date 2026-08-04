@@ -1,10 +1,6 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: mcp-gateway-postgres
-    restart: unless-stopped
-    env_file:
-      - .env
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -14,10 +10,33 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 5s
-      timeout: 5s
-      retries: 10
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: ./backend
+    environment:
+      APP_ENV: production
+      HTTP_PORT: 8080
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER:-mcp-gateway}
+      JWT_TTL_MINUTES: ${JWT_TTL_MINUTES:-60}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
 
 volumes:
   postgres_data:

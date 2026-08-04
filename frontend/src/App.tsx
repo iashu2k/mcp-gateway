@@ -11,6 +11,7 @@ import AdminServersPage from "./pages/admin/AdminServersPage";
 import ServerFormPage from "./pages/admin/ServerFormPage";
 import ToolFormPage from "./pages/admin/ToolFormPage";
 import MetricsPage from "./pages/metrics/MetricsPage";
+import ProfilePage from "./pages/profile/ProfilePage";
 
 const queryClient = new QueryClient();
 
@@ -56,7 +57,6 @@ function App() {
               />
               <Route path="invocations" element={<InvocationsPage />} />
 
-              {/* ✅ CORRECT: Admin routes as siblings */}
               <Route path="admin/servers" element={<AdminServersPage />} />
               <Route path="admin/servers/new" element={<ServerFormPage />} />
               <Route
@@ -72,6 +72,7 @@ function App() {
                 element={<ToolFormPage />}
               />
               <Route path="metrics" element={<MetricsPage />} />
+              <Route path="profile" element={<ProfilePage />} />
             </Route>
           </Routes>
         </BrowserRouter>
