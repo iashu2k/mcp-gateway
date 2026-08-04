@@ -8,6 +8,15 @@ import type {
   User,
 } from '../types';
 
+import axios from 'axios';
+import { parsePrometheusText, type MetricSample } from '../utils/prometheus';
+
+export const getMetrics = async (): Promise<MetricSample[]> => {
+  const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+  const { data } = await axios.get<string>(`${baseURL}/metrics`);
+  return parsePrometheusText(data);
+};
+
 // Auth
 export const login = async (email: string, password: string): Promise<LoginResponse> => {
   const { data } = await apiClient.post<LoginResponse>('/api/v1/auth/login', {

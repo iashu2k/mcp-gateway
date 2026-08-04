@@ -10,6 +10,7 @@ import InvocationsPage from "./pages/invocations/InvocationsPage";
 import AdminServersPage from "./pages/admin/AdminServersPage";
 import ServerFormPage from "./pages/admin/ServerFormPage";
 import ToolFormPage from "./pages/admin/ToolFormPage";
+import MetricsPage from "./pages/metrics/MetricsPage";
 
 const queryClient = new QueryClient();
 
@@ -70,6 +71,7 @@ function App() {
                 path="admin/servers/:serverId/tools/:toolId/edit"
                 element={<ToolFormPage />}
               />
+              <Route path="metrics" element={<MetricsPage />} />
             </Route>
           </Routes>
         </BrowserRouter>
