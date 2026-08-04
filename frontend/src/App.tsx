@@ -7,6 +7,9 @@ import ServersPage from "./pages/servers/ServersPage";
 import ServerDetailPage from "./pages/servers/ServerDetailPage";
 import ToolDetailPage from "./pages/tools/ToolDetailPage";
 import InvocationsPage from "./pages/invocations/InvocationsPage";
+import AdminServersPage from "./pages/admin/AdminServersPage";
+import ServerFormPage from "./pages/admin/ServerFormPage";
+import ToolFormPage from "./pages/admin/ToolFormPage";
 
 const queryClient = new QueryClient();
 
@@ -51,6 +54,22 @@ function App() {
                 element={<ToolDetailPage />}
               />
               <Route path="invocations" element={<InvocationsPage />} />
+
+              {/* ✅ CORRECT: Admin routes as siblings */}
+              <Route path="admin/servers" element={<AdminServersPage />} />
+              <Route path="admin/servers/new" element={<ServerFormPage />} />
+              <Route
+                path="admin/servers/:serverId/edit"
+                element={<ServerFormPage />}
+              />
+              <Route
+                path="admin/servers/:serverId/tools/new"
+                element={<ToolFormPage />}
+              />
+              <Route
+                path="admin/servers/:serverId/tools/:toolId/edit"
+                element={<ToolFormPage />}
+              />
             </Route>
           </Routes>
         </BrowserRouter>

@@ -40,7 +40,7 @@ export default function Layout() {
                 </Link>
                 {user?.role === "admin" && (
                   <Link
-                    to="/admin"
+                    to="/admin/servers"
                     className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-900 hover:text-indigo-600"
                   >
                     <Settings className="h-4 w-4 mr-1" />
