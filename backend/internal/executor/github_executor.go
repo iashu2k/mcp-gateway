@@ -35,7 +35,7 @@ func (e *GitHubExecutor) Execute(
 	case "list_issues":
 		return e.listIssues(ctx, arguments)
 	case "search_repositories":
-    return e.searchRepositories(ctx, arguments)
+		return e.searchRepositories(ctx, arguments)
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedTool, tool.Name)
 	}
@@ -106,46 +106,46 @@ func (e *GitHubExecutor) listIssues(
 }
 
 func (e *GitHubExecutor) searchRepositories(
-    ctx context.Context,
-    arguments json.RawMessage,
+	ctx context.Context,
+	arguments json.RawMessage,
 ) (json.RawMessage, error) {
-    var input struct {
-        Query   string `json:"query"`
-        PerPage int    `json:"per_page"`
-    }
+	var input struct {
+		Query   string `json:"query"`
+		PerPage int    `json:"per_page"`
+	}
 
-    if err := json.Unmarshal(arguments, &input); err != nil {
-        return nil, fmt.Errorf("decode search_repositories arguments: %w", err)
-    }
+	if err := json.Unmarshal(arguments, &input); err != nil {
+		return nil, fmt.Errorf("decode search_repositories arguments: %w", err)
+	}
 
-    if input.PerPage <= 0 || input.PerPage > 100 {
-        input.PerPage = 10
-    }
+	if input.PerPage <= 0 || input.PerPage > 100 {
+		input.PerPage = 10
+	}
 
-    opts := &github.SearchOptions{
-        ListOptions: github.ListOptions{PerPage: input.PerPage},
-    }
+	opts := &github.SearchOptions{
+		ListOptions: github.ListOptions{PerPage: input.PerPage},
+	}
 
-    result, _, err := e.client.Search.Repositories(ctx, input.Query, opts)
-    if err != nil {
-        return nil, fmt.Errorf("%w: %v", ErrGitHubUpstream, err)
-    }
+	result, _, err := e.client.Search.Repositories(ctx, input.Query, opts)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrGitHubUpstream, err)
+	}
 
-    items := make([]map[string]any, 0, len(result.Repositories))
-    for _, repo := range result.Repositories {
-        items = append(items, map[string]any{
-            "name":        repo.GetFullName(),
-            "description": repo.GetDescription(),
-            "stars":       repo.GetStargazersCount(),
-            "language":    repo.GetLanguage(),
-            "url":         repo.GetHTMLURL(),
-        })
-    }
+	items := make([]map[string]any, 0, len(result.Repositories))
+	for _, repo := range result.Repositories {
+		items = append(items, map[string]any{
+			"name":        repo.GetFullName(),
+			"description": repo.GetDescription(),
+			"stars":       repo.GetStargazersCount(),
+			"language":    repo.GetLanguage(),
+			"url":         repo.GetHTMLURL(),
+		})
+	}
 
-    return json.Marshal(map[string]any{
-        "query":        input.Query,
-        "total_count":  result.GetTotal(),
-        "count":        len(items),
-        "repositories": items,
-    })
+	return json.Marshal(map[string]any{
+		"query":        input.Query,
+		"total_count":  result.GetTotal(),
+		"count":        len(items),
+		"repositories": items,
+	})
 }

@@ -99,7 +99,6 @@ func NewRouter(
 		MaxAge:           300, // 5 minutes
 	}))
 
-
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
