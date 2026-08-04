@@ -50,20 +50,20 @@ MCP Gateway addresses this by acting as a secure control plane for internal MCP 
 
 ```text
                     ┌─────────────────────────────┐
-                    │       React Web UI           │
-                    │ Catalog • Sandbox • History  │
-                    │ Metrics • Admin Panel        │
+                    │       React Web UI          │
+                    │ Catalog • Sandbox • History │
+                    │ Metrics • Admin Panel       │
                     └──────────────┬──────────────┘
                                    │
                                    ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Go MCP Gateway                            │
+│                        Go MCP Gateway                           │
 │                                                                 │
-│ Server Registry • Tool Catalog • JWT Auth • RBAC               │
-│ Invocation Gateway • JSON Schema Validation • Audit Records    │
-│ Live GitHub Executor • Mock Executor • Upstream Error Capture  │
-│ Prometheus Metrics • OpenTelemetry Tracing • History API       │
-│ CORS Middleware • Structured Logging                           │
+│ Server Registry • Tool Catalog • JWT Auth • RBAC                │
+│ Invocation Gateway • JSON Schema Validation • Audit Records     │
+│ Live GitHub Executor • Mock Executor • Upstream Error Capture   │
+│ Prometheus Metrics • OpenTelemetry Tracing • History API        │
+│ CORS Middleware • Structured Logging                            │
 └─────────────┬──────────────────┬──────────────────┬─────────────┘
               │                  │                  │
               ▼                  ▼                  ▼
@@ -74,8 +74,8 @@ MCP Gateway addresses this by acting as a secure control plane for internal MCP 
               │
               ▼
       ┌─────────────────────────────────────────────────────────┐
-      │ PostgreSQL                                               │
-      │ Users • Servers • Tools • Invocation Audit Records       │
+      │ PostgreSQL                                              │
+      │ Users • Servers • Tools • Invocation Audit Records      │
       └─────────────────────────────────────────────────────────┘
 ```
 
@@ -166,15 +166,15 @@ React App (Vite + TypeScript)
 
 ```text
 ┌─────────────────────────────────────────────┐
-│ docker compose                               │
+│ docker compose                              │
 │                                             │
 │  ┌──────────┐   ┌──────────┐   ┌─────────┐  │
 │  │ web      │──▶│ api      │──▶│postgres │  │
 │  │ nginx:80 │   │ go:8080  │   │ pg:5432 │  │
 │  └──────────┘   └──────────┘   └─────────┘  │
-│       │                                      │
-│  User → http://localhost:3000                │
-│  (nginx proxies /api, /health, /metrics)     │
+│       │                                     │
+│  User → http://localhost:3000               │
+│  (nginx proxies /api, /health, /metrics)    │
 └─────────────────────────────────────────────┘
 ```
 
