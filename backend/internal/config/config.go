@@ -7,13 +7,14 @@ import (
 )
 
 type Config struct {
-	AppEnv        string
-	HTTPPort      int
-	DatabaseURL   string
-	JWTSecret     string
-	JWTIssuer     string
-	JWTTTLMinutes int
-	GitHubToken   string
+	AppEnv               string
+	HTTPPort             int
+	DatabaseURL          string
+	JWTSecret            string
+	JWTIssuer            string
+	JWTTTLMinutes        int
+	GitHubToken          string
+	MCPUpstreamTimeoutMS int
 }
 
 func Load() (Config, error) {
@@ -31,6 +32,17 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("JWT_TTL_MINUTES must be greater than zero")
 	}
 
+	mcpUpstreamTimeoutMS, err := strconv.Atoi(
+		getEnv("MCP_UPSTREAM_TIMEOUT_MS", "10000"),
+	)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse MCP_UPSTREAM_TIMEOUT_MS: %w", err)
+	}
+
+	if mcpUpstreamTimeoutMS <= 0 {
+		return Config{}, fmt.Errorf("MCP_UPSTREAM_TIMEOUT_MS must be greater than zero")
+	}
+
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
@@ -46,13 +58,14 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		AppEnv:        getEnv("APP_ENV", "development"),
-		HTTPPort:      port,
-		DatabaseURL:   databaseURL,
-		JWTSecret:     jwtSecret,
-		JWTIssuer:     getEnv("JWT_ISSUER", "mcp-gateway"),
-		JWTTTLMinutes: jwtTTLMinutes,
-		GitHubToken:   os.Getenv("GITHUB_TOKEN"),
+		AppEnv:               getEnv("APP_ENV", "development"),
+		HTTPPort:             port,
+		DatabaseURL:          databaseURL,
+		JWTSecret:            jwtSecret,
+		JWTIssuer:            getEnv("JWT_ISSUER", "mcp-gateway"),
+		JWTTTLMinutes:        jwtTTLMinutes,
+		GitHubToken:          os.Getenv("GITHUB_TOKEN"),
+		MCPUpstreamTimeoutMS: mcpUpstreamTimeoutMS,
 	}, nil
 }
 

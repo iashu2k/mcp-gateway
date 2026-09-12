@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
+	"time"
 
 	"net/url"
 	"strings"
@@ -40,12 +42,41 @@ type ServerStore interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 }
 
-type ServerService struct {
-	repository ServerStore
+// ToolDiscoverer runs tools/list against a live upstream. Satisfied by
+// executor.MCPExecutor (Phase 9.4, D4).
+type ToolDiscoverer interface {
+	DiscoverTools(ctx context.Context, server domain.MCPServer) ([]domain.MCPTool, error)
 }
 
-func NewServerService(repository ServerStore) *ServerService {
-	return &ServerService{repository: repository}
+// DiscoveredToolStore persists discovered tools. Satisfied by
+// repository.ToolRepository.
+type DiscoveredToolStore interface {
+	UpsertDiscovered(ctx context.Context, serverID uuid.UUID, tools []domain.MCPTool) (int, error)
+}
+
+// DiscoveryDeps wires optional registration-time tool discovery. Passed
+// variadically to NewServerService so existing callers/tests that
+// construct the service without discovery keep compiling.
+type DiscoveryDeps struct {
+	Discoverer ToolDiscoverer
+	Tools      DiscoveredToolStore
+}
+
+type ServerService struct {
+	repository ServerStore
+	discovery  *DiscoveryDeps
+}
+
+func NewServerService(
+	repository ServerStore,
+	discovery ...DiscoveryDeps,
+) *ServerService {
+	service := &ServerService{repository: repository}
+	if len(discovery) > 0 && discovery[0].Discoverer != nil && discovery[0].Tools != nil {
+		deps := discovery[0]
+		service.discovery = &deps
+	}
+	return service
 }
 
 func (s *ServerService) Create(
@@ -94,6 +125,8 @@ func (s *ServerService) Create(
 		}
 		return domain.MCPServer{}, err
 	}
+
+	s.syncDiscoveredTools(created)
 
 	return created, nil
 }
@@ -169,6 +202,8 @@ func (s *ServerService) Update(
 		return domain.MCPServer{}, err
 	}
 
+	s.syncDiscoveredTools(updated)
+
 	return updated, nil
 }
 
@@ -182,6 +217,48 @@ func (s *ServerService) Delete(
 	}
 
 	return s.repository.Delete(ctx, id)
+}
+
+// syncDiscoveredTools runs registration-time tools/list discovery for
+// streamable_http servers (D4). Failure keeps the server row and only logs
+// the error — discovery is best-effort, and an unreachable upstream must not
+// block catalog management (D4 failure mode). The sync is detached from the
+// request context and bounded, so it completes even if the client
+// disconnects, without hanging the HTTP response indefinitely.
+func (s *ServerService) syncDiscoveredTools(server domain.MCPServer) {
+	if s.discovery == nil ||
+		server.TransportType != domain.TransportStreamableHTTP {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	tools, err := s.discovery.Discoverer.DiscoverTools(ctx, server)
+	if err != nil {
+		slog.Error("tool discovery failed; server saved without discovered tools",
+			"server_id", server.ID,
+			"server_name", server.Name,
+			"error", err,
+		)
+		return
+	}
+
+	synced, err := s.discovery.Tools.UpsertDiscovered(ctx, server.ID, tools)
+	if err != nil {
+		slog.Error("failed to persist discovered tools",
+			"server_id", server.ID,
+			"server_name", server.Name,
+			"error", err,
+		)
+		return
+	}
+
+	slog.Info("discovered tools synced",
+		"server_id", server.ID,
+		"server_name", server.Name,
+		"tools", synced,
+	)
 }
 
 func parseServerID(serverID string) (uuid.UUID, error) {

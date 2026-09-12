@@ -40,7 +40,7 @@ func NewRouter(
 	// Services
 	// -------------------------------------------------------------------------
 
-	serverService := service.NewServerService(serverRepository)
+	// serverService := service.NewServerService(serverRepository)
 
 	toolService := service.NewToolService(
 		toolRepository,
@@ -60,9 +60,19 @@ func NewRouter(
 
 	schemaValidator := service.NewJSONSchemaValidator()
 
+	mcpExecutor := executor.NewMCPExecutor(
+		time.Duration(cfg.MCPUpstreamTimeoutMS) * time.Millisecond,
+	)
+
 	toolExecutor := executor.NewRouterExecutor(
 		executor.NewMockExecutor(),
 		executor.NewGitHubExecutor(cfg.GitHubToken),
+		mcpExecutor,
+	)
+
+	serverService := service.NewServerService(
+		serverRepository,
+		service.DiscoveryDeps{Discoverer: mcpExecutor, Tools: toolRepository},
 	)
 
 	invocationService := service.NewInvocationService(
