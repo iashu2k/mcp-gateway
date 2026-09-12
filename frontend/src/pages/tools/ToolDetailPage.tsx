@@ -36,7 +36,7 @@ export default function ToolDetailPage() {
     try {
       const args = JSON.parse(argsJson);
       invokeMutation.mutate(args);
-    } catch (err) {
+    } catch {
       alert("Invalid JSON");
     }
   };
