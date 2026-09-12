@@ -70,9 +70,9 @@ func newTestHandler() (*httptest.Server, *fakeInvoker) {
 	deps := Deps{
 		Servers: fakeServerLister{servers: []domain.MCPServer{
 			{
-				ID:           serverID,
-				Name:         "demo",
-				Status:       domain.ServerStatusActive,
+				ID:            serverID,
+				Name:          "demo",
+				Status:        domain.ServerStatusActive,
 				TransportType: domain.TransportStreamableHTTP,
 			},
 			{
