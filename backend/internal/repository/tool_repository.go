@@ -25,29 +25,32 @@ func (r *ToolRepository) Create(
 	ctx context.Context,
 	tool domain.MCPTool,
 ) (domain.MCPTool, error) {
+	// source is intentionally not inserted: the DB default 'manual' applies.
+	// Phase 9.4 discovery upserts with source = 'discovered' explicitly.
 	const query = `
-		INSERT INTO mcp_tools (
-			server_id,
-			name,
-			title,
-			description,
-			input_schema,
-			risk_level,
-			enabled
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING
-			id,
-			server_id,
-			name,
-			title,
-			description,
-			input_schema,
-			risk_level,
-			enabled,
-			created_at,
-			updated_at
-	`
+    INSERT INTO mcp_tools (
+      server_id,
+      name,
+      title,
+      description,
+      input_schema,
+      risk_level,
+      enabled
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    RETURNING
+      id,
+      server_id,
+      name,
+      title,
+      description,
+      input_schema,
+      risk_level,
+      enabled,
+      source,
+      created_at,
+      updated_at
+  `
 
 	created, err := scanTool(r.db.QueryRow(
 		ctx,
@@ -72,21 +75,22 @@ func (r *ToolRepository) ListByServerID(
 	serverID uuid.UUID,
 ) ([]domain.MCPTool, error) {
 	const query = `
-		SELECT
-			id,
-			server_id,
-			name,
-			title,
-			description,
-			input_schema,
-			risk_level,
-			enabled,
-			created_at,
-			updated_at
-		FROM mcp_tools
-		WHERE server_id = $1
-		ORDER BY created_at ASC
-	`
+    SELECT
+      id,
+      server_id,
+      name,
+      title,
+      description,
+      input_schema,
+      risk_level,
+      enabled,
+      source,
+      created_at,
+      updated_at
+    FROM mcp_tools
+    WHERE server_id = $1
+    ORDER BY created_at ASC
+  `
 
 	rows, err := r.db.Query(ctx, query, serverID)
 	if err != nil {
@@ -118,21 +122,22 @@ func (r *ToolRepository) GetByID(
 	toolID uuid.UUID,
 ) (domain.MCPTool, error) {
 	const query = `
-		SELECT
-			id,
-			server_id,
-			name,
-			title,
-			description,
-			input_schema,
-			risk_level,
-			enabled,
-			created_at,
-			updated_at
-		FROM mcp_tools
-		WHERE server_id = $1
-		  AND id = $2
-	`
+    SELECT
+      id,
+      server_id,
+      name,
+      title,
+      description,
+      input_schema,
+      risk_level,
+      enabled,
+      source,
+      created_at,
+      updated_at
+    FROM mcp_tools
+    WHERE server_id = $1
+      AND id = $2
+  `
 
 	tool, err := scanTool(r.db.QueryRow(ctx, query, serverID, toolID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -149,30 +154,32 @@ func (r *ToolRepository) Update(
 	ctx context.Context,
 	tool domain.MCPTool,
 ) (domain.MCPTool, error) {
+	// source is intentionally not updatable here: provenance is system-managed.
 	const query = `
-		UPDATE mcp_tools
-		SET
-			name = $3,
-			title = $4,
-			description = $5,
-			input_schema = $6,
-			risk_level = $7,
-			enabled = $8,
-			updated_at = NOW()
-		WHERE server_id = $1
-		  AND id = $2
-		RETURNING
-			id,
-			server_id,
-			name,
-			title,
-			description,
-			input_schema,
-			risk_level,
-			enabled,
-			created_at,
-			updated_at
-	`
+    UPDATE mcp_tools
+    SET
+      name = $3,
+      title = $4,
+      description = $5,
+      input_schema = $6,
+      risk_level = $7,
+      enabled = $8,
+      updated_at = NOW()
+    WHERE server_id = $1
+      AND id = $2
+    RETURNING
+      id,
+      server_id,
+      name,
+      title,
+      description,
+      input_schema,
+      risk_level,
+      enabled,
+      source,
+      created_at,
+      updated_at
+  `
 
 	updated, err := scanTool(r.db.QueryRow(
 		ctx,
@@ -202,10 +209,10 @@ func (r *ToolRepository) Delete(
 	toolID uuid.UUID,
 ) error {
 	const query = `
-		DELETE FROM mcp_tools
-		WHERE server_id = $1
-		  AND id = $2
-	`
+    DELETE FROM mcp_tools
+    WHERE server_id = $1
+      AND id = $2
+  `
 
 	commandTag, err := r.db.Exec(ctx, query, serverID, toolID)
 	if err != nil {
@@ -231,6 +238,7 @@ func scanTool(row rowScanner) (domain.MCPTool, error) {
 		&tool.InputSchema,
 		&tool.RiskLevel,
 		&tool.Enabled,
+		&tool.Source,
 		&tool.CreatedAt,
 		&tool.UpdatedAt,
 	)

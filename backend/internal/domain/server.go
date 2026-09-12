@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,30 +18,33 @@ const (
 )
 
 type MCPServer struct {
-	ID            uuid.UUID `json:"id"`
-	Name          string    `json:"name"`
-	Description   string    `json:"description"`
-	BaseURL       string    `json:"baseUrl"`
-	TransportType string    `json:"transportType"`
-	Status        string    `json:"status"`
-	OwnerTeam     string    `json:"ownerTeam"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	ID               uuid.UUID       `json:"id"`
+	Name             string          `json:"name"`
+	Description      string          `json:"description"`
+	BaseURL          string          `json:"baseUrl"`
+	TransportType    string          `json:"transportType"`
+	Status           string          `json:"status"`
+	OwnerTeam        string          `json:"ownerTeam"`
+	ConnectionConfig json.RawMessage `json:"connectionConfig"`
+	CreatedAt        time.Time       `json:"createdAt"`
+	UpdatedAt        time.Time       `json:"updatedAt"`
 }
 
 type CreateMCPServerRequest struct {
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	BaseURL       string `json:"baseUrl"`
-	TransportType string `json:"transportType"`
-	OwnerTeam     string `json:"ownerTeam"`
+	Name             string           `json:"name"`
+	Description      string           `json:"description"`
+	BaseURL          string           `json:"baseUrl"`
+	TransportType    string           `json:"transportType"`
+	OwnerTeam        string           `json:"ownerTeam"`
+	ConnectionConfig *json.RawMessage `json:"connectionConfig"`
 }
 
 type UpdateMCPServerRequest struct {
-	Name          *string `json:"name"`
-	Description   *string `json:"description"`
-	BaseURL       *string `json:"baseUrl"`
-	TransportType *string `json:"transportType"`
-	Status        *string `json:"status"`
-	OwnerTeam     *string `json:"ownerTeam"`
+	Name             *string          `json:"name"`
+	Description      *string          `json:"description"`
+	BaseURL          *string          `json:"baseUrl"`
+	TransportType    *string          `json:"transportType"`
+	Status           *string          `json:"status"`
+	OwnerTeam        *string          `json:"ownerTeam"`
+	ConnectionConfig *json.RawMessage `json:"connectionConfig"`
 }

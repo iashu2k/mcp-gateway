@@ -5,12 +5,14 @@ export interface User {
   role: 'admin' | 'developer' | 'viewer';
 }
 
+
 export interface LoginResponse {
   accessToken: string;
   tokenType: string;
   expiresIn: number;
   user: User;
 }
+
 
 export interface MCPServer {
   id: string;
@@ -20,9 +22,11 @@ export interface MCPServer {
   transportType: string;
   status: 'active' | 'inactive' | 'unhealthy';
   ownerTeam: string;
+  connectionConfig: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
+
 
 export interface MCPTool {
   id: string;
@@ -33,9 +37,11 @@ export interface MCPTool {
   inputSchema: Record<string, any>;
   riskLevel: 'low' | 'medium' | 'high';
   enabled: boolean;
+  source: 'manual' | 'discovered';
   createdAt: string;
   updatedAt: string;
 }
+
 
 export interface ToolInvocation {
   id: string;
@@ -51,6 +57,7 @@ export interface ToolInvocation {
   createdAt: string;
   completedAt?: string;
 }
+
 
 export interface InvocationResponse {
   invocationId: string;

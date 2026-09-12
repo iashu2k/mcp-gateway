@@ -263,6 +263,30 @@ React App (Vite + TypeScript)
 - ✅ **Full-stack Docker Compose (postgres + api + web)**
 - ✅ **GitHub Actions CI: backend tests/vet/fmt, frontend lint/build, Docker image builds**
 
+### MCP endpoint (`/mcp`)
+
+The gateway exposes its governed tool catalog as a single MCP server over
+Streamable HTTP at `http://localhost:8080/mcp` (Phase 9). Tools are advertised
+as `serverName__toolName` and only enabled, low-risk tools on active servers
+are visible; `tools/call` passes through the same policy chain, schema
+validation, and audit trail as REST invocations.
+
+Non-browser MCP clients authenticate with the same JWT as the REST API:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"developer@mcp-gateway.local","password":"DeveloperPass123"}' \
+  | jq -r .accessToken)
+
+npx @modelcontextprotocol/inspector   # Streamable HTTP, URL http://localhost:8080/mcp,
+                                      # header: Authorization: Bearer $TOKEN
+```
+
+Unauthenticated requests receive `401` with a `WWW-Authenticate: Bearer`
+challenge. Full MCP authorization (OAuth 2.1 resource server with protected
+resource metadata) is deferred; the JWT bridge is the Phase 9 scope.
+
 ### Not yet implemented
 
 - OAuth/OIDC identity-provider integration

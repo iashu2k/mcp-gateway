@@ -16,6 +16,7 @@ import (
 	"github.com/iashu2k/mcp-gateway/backend/internal/config"
 	"github.com/iashu2k/mcp-gateway/backend/internal/domain"
 	"github.com/iashu2k/mcp-gateway/backend/internal/executor"
+	gatewaymcp "github.com/iashu2k/mcp-gateway/backend/internal/mcp"
 	"github.com/iashu2k/mcp-gateway/backend/internal/observability"
 	"github.com/iashu2k/mcp-gateway/backend/internal/repository"
 	"github.com/iashu2k/mcp-gateway/backend/internal/service"
@@ -39,7 +40,7 @@ func NewRouter(
 	// Services
 	// -------------------------------------------------------------------------
 
-	serverService := service.NewServerService(serverRepository)
+	// serverService := service.NewServerService(serverRepository)
 
 	toolService := service.NewToolService(
 		toolRepository,
@@ -59,9 +60,19 @@ func NewRouter(
 
 	schemaValidator := service.NewJSONSchemaValidator()
 
+	mcpExecutor := executor.NewMCPExecutor(
+		time.Duration(cfg.MCPUpstreamTimeoutMS) * time.Millisecond,
+	)
+
 	toolExecutor := executor.NewRouterExecutor(
 		executor.NewMockExecutor(),
 		executor.NewGitHubExecutor(cfg.GitHubToken),
+		mcpExecutor,
+	)
+
+	serverService := service.NewServerService(
+		serverRepository,
+		service.DiscoveryDeps{Discoverer: mcpExecutor, Tools: toolRepository},
 	)
 
 	invocationService := service.NewInvocationService(
@@ -84,6 +95,17 @@ func NewRouter(
 	invocationHandler := NewInvocationHandler(invocationService)
 	invocationHistoryHandler := NewInvocationHistoryHandler(invocationHistoryService)
 
+	// Phase 9: MCP Streamable HTTP endpoint. Stateless per-request server built
+	// from the live catalog; tools/call delegates to the invocation service so
+	// the policy chain and audit trail apply unchanged (docs/phase-9-decisions.md).
+	mcpHandler := gatewaymcp.NewHandler(gatewaymcp.Deps{
+		Servers:         serverRepository,
+		Tools:           toolRepository,
+		Invoker:         invocationService,
+		UserFromContext: AuthenticatedUserFromContext,
+		Logger:          logger,
+	})
+
 	// -------------------------------------------------------------------------
 	// Router and global middleware
 	// -------------------------------------------------------------------------
@@ -103,7 +125,9 @@ func NewRouter(
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
 	router.Use(requestLogger(logger))
-	router.Use(middleware.Timeout(15 * time.Second))
+	// NOTE: no global middleware.Timeout. It would cancel long-lived
+	// Streamable HTTP connections on /mcp; the 15s budget is applied to the
+	// /api/v1 group instead, keeping REST behavior identical (D10).
 
 	router.Get("/health", Handler{DB: db}.Health)
 
@@ -111,10 +135,21 @@ func NewRouter(
 	router.Get("/metrics", promhttp.Handler().ServeHTTP)
 
 	// -------------------------------------------------------------------------
+	// MCP endpoint (Phase 9): JWT-protected, no chi timeout (long-lived streams)
+	// -------------------------------------------------------------------------
+
+	router.Group(func(r chi.Router) {
+		r.Use(RequireAuthentication(tokenService))
+		r.Mount("/mcp", mcpHandler)
+	})
+
+	// -------------------------------------------------------------------------
 	// API v1 routes
 	// -------------------------------------------------------------------------
 
 	router.Route("/api/v1", func(r chi.Router) {
+		r.Use(middleware.Timeout(15 * time.Second))
+
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{
 				"message": "MCP Gateway API",
