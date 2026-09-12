@@ -1,10 +1,10 @@
 # MCP Gateway
 
-> 🚀 A self-hosted MCP Gateway for centrally registering, discovering, governing, and observing internal AI-tool integrations — complete with a Go backend, React UI, and full Docker deployment.
+> 🚀 A self-hosted MCP Gateway for centrally registering, discovering, governing, and observing internal AI-tool integrations — complete with a Go backend, React UI, native MCP protocol support, and full Docker deployment.
 
 The project is inspired by the idea of an internal "USB-C for AI agents": a unified platform where developers and AI agents can discover approved Model Context Protocol (MCP) servers, inspect their tools, invoke approved capabilities through centralized controls, and obtain audit-ready execution history with full observability.
 
-> ✅ **Current status:** Phase 8 complete — the gateway is production-ready with an admin panel, metrics dashboard, password management, Docker deployment, and CI pipeline.
+> ✅ **Current status:** Phase 9 complete — the gateway speaks native MCP in both directions. AI agents connect over Streamable HTTP, discover governed tools, and invoke them through the full policy chain; outbound MCP upstreams are auto-discovered and executed live. Production-ready with admin panel, metrics dashboard, Docker deployment, and CI.
 
 ---
 
@@ -13,6 +13,7 @@ The project is inspired by the idea of an internal "USB-C for AI agents": a unif
 - [Project Vision](#-project-vision)
 - [Why This Project](#-why-this-project)
 - [System Architecture](#-system-architecture)
+- [MCP Transport: How It Works](#-mcp-transport-how-it-works)
 - [Technology Stack](#-technology-stack)
 - [Current Features](#-current-features)
 - [Development Roadmap](#-development-roadmap)
@@ -28,6 +29,7 @@ The project is inspired by the idea of an internal "USB-C for AI agents": a unif
 - [Validation and Testing](#-validation-and-testing)
 - [Design Decisions](#-design-decisions)
 - [Known Limitations](#-known-limitations)
+- [Future Enhancements](#-future-enhancements)
 - [Troubleshooting](#-troubleshooting)
 - [Contributing Workflow](#-contributing-workflow)
 
@@ -55,28 +57,30 @@ MCP Gateway addresses this by acting as a secure control plane for internal MCP 
                     │ Metrics • Admin Panel       │
                     └──────────────┬──────────────┘
                                    │
-                                   ▼
+        AI Agents / MCP Clients    │    (Claude Desktop, MCP Inspector,
+                    │              │     agent frameworks)
+                    │ MCP          │
+                    ▼              ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Go MCP Gateway                           │
 │                                                                 │
-│ Server Registry • Tool Catalog • JWT Auth • RBAC                │
-│ Invocation Gateway • JSON Schema Validation • Audit Records     │
-│ Live GitHub Executor • Mock Executor • Upstream Error Capture   │
-│ Prometheus Metrics • OpenTelemetry Tracing • History API        │
-│ CORS Middleware • Structured Logging                            │
-└─────────────┬──────────────────┬──────────────────┬─────────────┘
-              │                  │                  │
-              ▼                  ▼                  ▼
-      ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
-      │ GitHub REST   │  │ Jira MCP      │  │ Slack MCP     │
-      │ API (live)    │  │ Server/API    │  │ Server/API    │
-      └───────────────┘  └───────────────┘  └───────────────┘
-              │
-              ▼
-      ┌─────────────────────────────────────────────────────────┐
-      │ PostgreSQL                                              │
-      │ Users • Servers • Tools • Invocation Audit Records      │
-      └─────────────────────────────────────────────────────────┘
+│ /mcp Streamable HTTP endpoint • Server Registry • Tool Catalog  │
+│ JWT Auth • RBAC • Invocation Gateway • JSON Schema Validation   │
+│ Audit Records • Prometheus Metrics • OTel Tracing • History API │
+└───────┬──────────────┬──────────────────┬───────────────────────┘
+        │              │                  │
+        ▼              ▼                  ▼
+┌───────────────┐ ┌───────────────┐ ┌───────────────────┐
+│ GitHub REST   │ │ Live MCP      │ │ Jira / Slack MCP  │
+│ API (live)    │ │ upstreams     │ │ servers (mock)    │
+└───────────────┘ │ (auto-tools)  │ └───────────────────┘
+                  └───────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────┐
+│ PostgreSQL                                              │
+│ Users • Servers • Tools • Invocation Audit Records      │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -88,11 +92,12 @@ This project demonstrates practical full-stack and AI-platform engineering skill
 It focuses on:
 
 - Go backend development and service design
+- Native MCP protocol implementation, both server-side and client-side (official `modelcontextprotocol/go-sdk`)
 - PostgreSQL schema design and migrations
 - API gateway patterns and JSON Schema-driven validation
 - JWT authentication and role-based access control
 - Policy-controlled tool invocation with durable audit records
-- Live third-party API integration (GitHub REST)
+- Live third-party integrations (GitHub REST, live MCP upstreams)
 - Observability: Prometheus metrics, OpenTelemetry tracing, history API
 - Modern React UI with Vite, TypeScript, and Tailwind CSS v4
 - Admin panel with full CRUD for servers and tools
@@ -108,38 +113,45 @@ It focuses on:
 ### Current architecture
 
 ```text
-Developer / API Client / React UI
-         │
-         │ HTTP / JSON / CORS
-         ▼
-┌──────────────────────────────────────┐
-│ Go MCP Gateway                       │
-│                                      │
-│ chi Router • CORS • Request ID       │
-│ Status-aware logging • Timeouts      │
-│ JWT auth • RBAC middleware           │
-│ Health + Metrics endpoints           │
-│ Server Registry • Tool Catalog       │
-│ Invocation API • History API         │
-│ Password change endpoint             │
-│ JSON Schema argument validation      │
-│                                      │
-│ Observability                        │
-│ ├── Prometheus metrics               │
-│ ├── OpenTelemetry tracing            │
-│ └── Structured logging               │
-│                                      │
-│ Executor Router                      │
-│ ├── MockExecutor (in-process)        │
-│ └── GitHubExecutor (live REST API)   │
-└────────────────┬─────────────────────┘
-                 │
-                 ▼
-┌──────────────────────────────────────┐
-│ PostgreSQL 16                        │
-│ users • mcp_servers • mcp_tools      │
-│ tool_invocations • schema_migrations │
-└──────────────────────────────────────┘
+Developer / API Client / React UI / AI Agents (MCP)
+         │                              │
+         │ HTTP / JSON / CORS           │ MCP over Streamable HTTP
+         ▼                              ▼
+┌────────────────────────────────────────────────────┐
+│ Go MCP Gateway                                     │
+│                                                    │
+│ chi Router • CORS • Request ID                     │
+│ Status-aware logging • Scoped timeouts             │
+│ JWT auth • RBAC middleware • WWW-Authenticate      │
+│ Health + Metrics endpoints                         │
+│ Server Registry • Tool Catalog                     │
+│ Invocation API • History API                       │
+│ Password change endpoint                           │
+│ JSON Schema argument validation                    │
+│                                                    │
+│ MCP transport (Phase 9)                            │
+│ └── /mcp Streamable HTTP endpoint                  │
+│     (stateless, catalog-driven, namespaced tools)  │
+│                                                    │
+│ Observability                                      │
+│ ├── Prometheus metrics                             │
+│ ├── OpenTelemetry tracing                          │
+│ └── Structured logging                             │
+│                                                    │
+│ Executor Router                                    │
+│ ├── MockExecutor (in-process)                      │
+│ ├── GitHubExecutor (live REST API)                 │
+│ └── MCPExecutor (live MCP upstreams,               │
+│     session-cached, auto-discovered tools)         │
+└──────────────────────┬─────────────────────────────┘
+                       │
+                       ▼
+┌────────────────────────────────────────────────────┐
+│ PostgreSQL 16                                      │
+│ users • mcp_servers (+connection_config)           │
+│ mcp_tools (+source) • tool_invocations             │
+│ schema_migrations                                  │
+└────────────────────────────────────────────────────┘
 ```
 
 ### React UI architecture
@@ -159,7 +171,7 @@ React App (Vite + TypeScript)
     ├── Invocations (history, filters)
     ├── Metrics (live dashboard with charts)
     ├── Profile (password change)
-    └── Admin (server/tool CRUD)
+    └── Admin (server/tool CRUD, connection config editor)
 ```
 
 ### Docker deployment architecture
@@ -177,6 +189,110 @@ React App (Vite + TypeScript)
 │  (nginx proxies /api, /health, /metrics)    │
 └─────────────────────────────────────────────┘
 ```
+
+---
+
+## 🔌 MCP Transport: How It Works
+
+Phase 9 made the gateway a first-class MCP citizen in **both** directions, using the official [`modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk) over the Streamable HTTP transport. (SSE was deprecated by the MCP spec and is intentionally not implemented; stdio is deferred.)
+
+### Inbound: the gateway as an MCP server
+
+AI agents (Claude Desktop, MCP Inspector, agent frameworks) connect to a single endpoint, `http://localhost:8080/mcp`, and see the whole governed catalog as one logical MCP server.
+
+```text
+MCP Client                      Go MCP Gateway
+   │                                  │
+   │  POST /mcp  initialize           │
+   │ ────────────────▶  RequireAuthentication (JWT Bearer, RFC 6750 challenge)
+   │                   NewHandler builds a FRESH mcp.Server per request:
+   │                     1. List active servers from Postgres
+   │                     2. List their tools; keep enabled + low-risk only
+   │                     3. Register each as  serverName__toolName
+   │                        with the stored JSON Schema as inputSchema
+   │ ◀────────────────  serverInfo: mcp-gateway, capabilities: tools
+   │                                  │
+   │  POST /mcp  tools/list           │
+   │ ────────────────▶  (catalog read live from Postgres — admin CRUD
+   │ ◀────────────────   is reflected on the very next call)
+   │                                  │
+   │  POST /mcp  tools/call           │
+   │    {name: "github__list_issues", arguments: {...}}
+   │ ────────────────▶  split namespace → resolve server/tool IDs
+   │                    → InvocationService.Invoke (UNCHANGED path):
+   │                      role check → server active → tool enabled
+   │                      → low-risk only → JSON Schema validation
+   │                      → executor router → durable audit row
+   │ ◀────────────────  content blocks (+ structuredContent)
+   │                    isError:true on policy denial or execution failure
+```
+
+Key properties:
+
+- **Stateless per-request server construction** — no session state, no cache invalidation, works across replicas; the newest MCP protocol revision requires stateless mode.
+- **Zero duplicated policy logic** — `tools/call` delegates to the same `InvocationService` as the REST invoke endpoint. A governance bypass is impossible by construction.
+- **Namespace namespacing (`serverName__toolName`)** prevents collisions between servers and makes governance ownership visible to agents.
+- **Exposure rule** — a tool is visible iff its server is `active`, the tool is `enabled`, and `risk_level = 'low'` — identical to the REST policy.
+- **Unknown tools** are rejected by the SDK at the protocol layer (`-32602 invalid params`); execution failures surface as `isError` tool results per MCP convention.
+- **Auth** is the existing JWT (`POST /api/v1/auth/login` → `Authorization: Bearer`). 401s carry a `WWW-Authenticate: Bearer` challenge. Full MCP OAuth 2.1 is deferred (see Future Enhancements).
+- The chi 15-second request timeout is scoped to `/api/v1` only, so long-lived MCP streams are never cut.
+
+### Outbound: the gateway as an MCP client
+
+Registering a server with `transport_type = streamable_http` turns the gateway into an MCP client:
+
+```text
+Admin creates server (base_url, connection_config)
+        │
+        ▼
+ServerService.syncDiscoveredTools
+        │  1. MCPExecutor dials the upstream (StreamableClientTransport,
+        │     lazy, session cached by server ID, dial/call timeout from
+        │     MCP_UPSTREAM_TIMEOUT_MS)
+        │  2. tools/list (paginated)
+        │  3. Upsert into mcp_tools with source='discovered' in ONE
+        │     transaction — on conflict, only name/description/schema
+        │     refresh; admin-set risk_level/enabled always win
+        │  4. Discovery failure keeps the server row and logs the error
+        ▼
+Invocation of a discovered tool:
+  RouterExecutor precedence:
+    1. name = "github"                        → GitHubExecutor (REST)
+    2. streamable_http + source='discovered'  → MCPExecutor (live MCP)
+    3. otherwise                              → MockExecutor
+        │
+        ▼
+  MCPExecutor.Execute: forwarded arguments → upstream tools/call
+  → content blocks normalized into the audit JSON
+  → isError / transport failures recorded as failed audit rows
+  → metrics: mcp_gateway_upstream_requests_total{service="mcp", ...}
+```
+
+Credential hygiene for outbound upstreams: `connection_config` stores **environment variable references, never secrets**:
+
+```json
+{"headers": {"Authorization": "UPSTREAM_TOKEN_ENV"}}
+```
+
+Service-layer validation enforces `^[A-Z_][A-Z0-9_]*$` on every header value, so a raw token cannot be persisted; the executor resolves values from the process environment at dial time.
+
+### Try it
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"developer@mcp-gateway.local","password":"DeveloperPass123"}' \
+  | jq -r .accessToken)
+
+npx @modelcontextprotocol/inspector   # Transport: Streamable HTTP
+                                      # URL: http://localhost:8080/mcp
+                                      # Header: Authorization: Bearer $TOKEN
+# → tools/list shows github__list_issues, mock-tools__echo, ...
+# → tools/call github__list_issues {"owner":"golang","repo":"go","per_page":3}
+# → History page shows the audited invocation; /metrics increments
+```
+
+The end-to-end gate script `scripts/c1-gate-check.sh` automates 14 checks across both transports (auth rejection, exposure filtering, policy denial, audit rows, protocol errors).
 
 ---
 
@@ -203,6 +319,7 @@ React App (Vite + TypeScript)
 | Language | Go 1.26 | Concurrent, strongly typed gateway |
 | HTTP routing | go-chi/chi | Lightweight REST routing and middleware |
 | CORS | go-chi/cors | Cross-origin resource sharing |
+| MCP protocol | modelcontextprotocol/go-sdk | Tier-1 MCP SDK: Streamable HTTP server + client |
 | Database | PostgreSQL 16 + pgx/v5 | Persistence and connection pooling |
 | Migrations | golang-migrate | Version-controlled schema evolution |
 | Schema validation | santhosh-tekuri/jsonschema/v6 | JSON Schema draft 2020-12 validation |
@@ -224,7 +341,7 @@ React App (Vite + TypeScript)
 
 ## ✨ Current Features
 
-### Backend (Phases 0–6, 8)
+### Backend (Phases 0–6, 8–9)
 
 - ✅ Go API with chi router, middleware, and graceful shutdown
 - ✅ PostgreSQL persistence with version-controlled migrations
@@ -239,61 +356,43 @@ React App (Vite + TypeScript)
 - ✅ Invocation history API with role-based filtering and pagination
 - ✅ OpenTelemetry tracing (stdout exporter for local dev)
 - ✅ CORS middleware for React UI integration
-- ✅ **Password change endpoint with current-password verification**
-- ✅ Unit tests for services, JWT, and middleware
+- ✅ Password change endpoint with current-password verification
+- ✅ **Native MCP server: governed catalog over Streamable HTTP at `/mcp`**
+- ✅ **Outbound MCP executor with registration-time tool auto-discovery**
+- ✅ **Tool provenance tracking (`manual` vs `discovered`) with governance-preserving sync**
+- ✅ **Env-var credential references for upstream auth (no secrets in the DB)**
+- ✅ Unit + concurrency tests (services, JWT, middleware, MCP executor, MCP endpoint)
 
-### Frontend (Phases 7–8)
+### Frontend (Phases 7–9)
 
 - ✅ Vite + React 18 + TypeScript with Tailwind CSS v4
 - ✅ JWT login with protected routes and auth context
 - ✅ Server catalog with status badges and detail pages
 - ✅ Tool detail with schema viewer and invoke sandbox
 - ✅ Invocation history with status filters and pagination
-- ✅ **Admin panel: server CRUD (list, create, edit, delete with confirmation)**
-- ✅ **Admin panel: tool CRUD with JSON schema editor**
-- ✅ **Metrics dashboard with live charts (Recharts + Prometheus parsing)**
-- ✅ **Profile page with password change form**
+- ✅ Admin panel: server CRUD (list, create, edit, delete with confirmation)
+- ✅ Admin panel: tool CRUD with JSON schema editor
+- ✅ **Admin panel: connection config editor for MCP upstreams**
+- ✅ Metrics dashboard with live charts (Recharts + Prometheus parsing)
+- ✅ Profile page with password change form
 - ✅ React Query caching, loading states, and error handling
 - ✅ Responsive layout with role-based navigation
 
 ### Infrastructure (Phase 8)
 
-- ✅ **Backend Dockerfile (multi-stage Go build → Alpine)**
-- ✅ **Frontend Dockerfile (Node build → nginx with SPA fallback + API proxy)**
-- ✅ **Full-stack Docker Compose (postgres + api + web)**
-- ✅ **GitHub Actions CI: backend tests/vet/fmt, frontend lint/build, Docker image builds**
-
-### MCP endpoint (`/mcp`)
-
-The gateway exposes its governed tool catalog as a single MCP server over
-Streamable HTTP at `http://localhost:8080/mcp` (Phase 9). Tools are advertised
-as `serverName__toolName` and only enabled, low-risk tools on active servers
-are visible; `tools/call` passes through the same policy chain, schema
-validation, and audit trail as REST invocations.
-
-Non-browser MCP clients authenticate with the same JWT as the REST API:
-
-```bash
-TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"developer@mcp-gateway.local","password":"DeveloperPass123"}' \
-  | jq -r .accessToken)
-
-npx @modelcontextprotocol/inspector   # Streamable HTTP, URL http://localhost:8080/mcp,
-                                      # header: Authorization: Bearer $TOKEN
-```
-
-Unauthenticated requests receive `401` with a `WWW-Authenticate: Bearer`
-challenge. Full MCP authorization (OAuth 2.1 resource server with protected
-resource metadata) is deferred; the JWT bridge is the Phase 9 scope.
+- ✅ Backend Dockerfile (multi-stage Go build → Alpine)
+- ✅ Frontend Dockerfile (Node build → nginx with SPA fallback + API proxy)
+- ✅ Full-stack Docker Compose (postgres + api + web)
+- ✅ GitHub Actions CI: backend tests/vet/fmt, frontend lint/build, Docker image builds
 
 ### Not yet implemented
 
 - OAuth/OIDC identity-provider integration
+- Full MCP authorization spec (OAuth 2.1 resource server); `/mcp` bridges the existing JWT
+- stdio transport for MCP upstreams (SSE deprecated by the MCP spec, never implemented)
 - Per-server/per-tool user permissions
 - Medium/high-risk invocation confirmation flows
-- Additional executors (Jira, Slack, Confluence)
-- MCP protocol transport (stdio/SSE/streamable HTTP)
+- Additional REST executors (Jira, Slack, Confluence)
 - Grafana/Jaeger backends for metrics and traces
 - Invocation detail modal and CSV export in history page
 - Refresh tokens and token revocation
@@ -313,6 +412,7 @@ resource metadata) is deferred; the JWT bridge is the Phase 9 scope.
 | Phase 6 | ✅ Complete | Observability | Prometheus metrics, tracing, history API |
 | Phase 7 | ✅ Complete | React UI | Vite + React UI with catalog, sandbox, history |
 | Phase 8 | ✅ Complete | Delivery & Polish | Admin panel, metrics dashboard, Docker, CI |
+| Phase 9 | ✅ Complete | Native MCP Transport | `/mcp` endpoint, outbound MCPExecutor, tool auto-discovery |
 
 ---
 
@@ -328,13 +428,14 @@ mcp-gateway/
 │   │   ├── auth/                        # JWT signing & validation
 │   │   ├── config/                      # Environment configuration
 │   │   ├── domain/                      # Core models & request types
-│   │   ├── executor/                    # Mock + GitHub + router executors
+│   │   ├── executor/                    # Mock + GitHub + MCP + router executors
 │   │   ├── httpapi/                     # Handlers, middleware, router, CORS
+│   │   ├── mcp/                         # MCP Streamable HTTP endpoint + catalog adapter
 │   │   ├── observability/               # Prometheus + OpenTelemetry
 │   │   ├── platform/database/           # PostgreSQL connection pool
-│   │   ├── repository/                  # SQL persistence layer
-│   │   └── service/                     # Business logic & validation
-│   ├── migrations/                      # 4 versioned SQL migrations
+│   │   ├── repository/                  # SQL persistence layer (+ discovery upsert)
+│   │   └── service/                     # Business logic & validation (+ discovery sync)
+│   ├── migrations/                      # 5 versioned SQL migrations
 │   ├── Dockerfile                       # Multi-stage Go build
 │   ├── .dockerignore
 │   ├── go.mod
@@ -362,7 +463,9 @@ mcp-gateway/
 │   └── package.json
 │
 ├── .github/workflows/ci.yml             # CI pipeline
+├── docs/phase-9-decisions.md            # MCP transport architecture decision log (D1–D11)
 ├── scripts/seed_users.sql               # Development user seed
+├── scripts/c1-gate-check.sh             # 14-check end-to-end MCP gate script
 ├── docker-compose.yml                   # Full-stack orchestration
 ├── .env.example
 └── README.md
@@ -411,7 +514,7 @@ This starts three containers:
 | Service | Image | Port | Purpose |
 |---|---|---|---|
 | `postgres` | postgres:16-alpine | 5432 | Database with health checks |
-| `api` | Multi-stage Go build | 8080 | Gateway API |
+| `api` | Multi-stage Go build | 8080 | Gateway API + `/mcp` endpoint |
 | `web` | Node build → nginx | 3000 | React UI with API proxy |
 
 ### 3. Run migrations and seed users
@@ -451,7 +554,7 @@ migrate -path backend/migrations -database "$DATABASE_URL" up
 psql "$DATABASE_URL" -f scripts/seed_users.sql
 
 cd backend
-go run ./cmd/api              # http://localhost:8080
+go run ./cmd/api              # http://localhost:8080  (REST + /mcp)
 ```
 
 ### Frontend
@@ -480,6 +583,7 @@ In dev mode, the UI at `:5173` talks to the API at `:8080` via the backend's COR
 | `JWT_ISSUER` | Yes | Expected issuer claim |
 | `JWT_TTL_MINUTES` | Yes | Access-token lifetime |
 | `GITHUB_TOKEN` | No | GitHub PAT (empty = unauthenticated, 60 req/hr) |
+| `MCP_UPSTREAM_TIMEOUT_MS` | No | Outbound MCP upstream dial/call timeout (default `10000`) |
 
 ### Frontend
 
@@ -487,7 +591,7 @@ In dev mode, the UI at `:5173` talks to the API at `:8080` via the backend's COR
 |---|---:|---|
 | `VITE_API_BASE_URL` | Yes | Base URL for the Go API (dev mode only; nginx proxies in Docker) |
 
-`.env` files are local-only and must never be committed.
+`.env` files are local-only and must never be committed. The same rule applies to upstream MCP credentials: `connection_config` holds environment variable *names*, and the referenced variables are provided through the process environment.
 
 ---
 
@@ -498,22 +602,27 @@ In dev mode, the UI at `:5173` talks to the API at `:8080` via the backend's COR
 000002_create_mcp_tools.up/down.sql
 000003_create_users.up/down.sql
 000004_create_tool_invocations.up/down.sql
+000005_add_outbound_mcp_support.up/down.sql
 ```
 
 ```bash
 migrate -path backend/migrations -database "$DATABASE_URL" up
-migrate -path backend/migrations -database "$DATABASE_URL" version   # → 4
+migrate -path backend/migrations -database "$DATABASE_URL" version   # → 5
 ```
+
+Migration 000005 adds `mcp_servers.connection_config` (JSONB, credential references) and `mcp_tools.source` (`manual` | `discovered`) for Phase 9 outbound support.
 
 ---
 
 ## 👥 Authentication and Roles
 
-| Role | Catalog reads | Catalog mutations | Tool invocation | Invocation history |
+| Role | Catalog reads | Catalog mutations | Tool invocation (REST + MCP) | Invocation history |
 |---|---:|---:|---:|---:|
 | `admin` | ✅ | ✅ | ✅ (low-risk) | All users |
 | `developer` | ✅ | ❌ | ✅ (low-risk) | Own only |
 | `viewer` | ✅ | ❌ | ❌ | ❌ |
+
+The same role rules apply on both transports: a viewer's MCP `tools/call` is denied by the shared policy chain with an `isError` result, and no audit row is created.
 
 ### Password change
 
@@ -542,6 +651,14 @@ Base URL: `http://localhost:8080/api/v1`
 | `GET` | `/metrics` | Prometheus metrics |
 | `POST` | `/auth/login` | Authenticate, receive JWT |
 
+### MCP endpoint
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` `GET` `DELETE` | `/mcp` | MCP over Streamable HTTP (JWT required). `initialize`, `tools/list`, `tools/call` for the governed catalog |
+
+See [MCP Transport: How It Works](#-mcp-transport-how-it-works) for the full flow.
+
 ### Authenticated (all roles)
 
 | Method | Endpoint | Purpose |
@@ -562,7 +679,7 @@ Base URL: `http://localhost:8080/api/v1`
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `POST` / `PATCH` / `DELETE` | `/servers[...]` | Server mutations |
+| `POST` / `PATCH` / `DELETE` | `/servers[...]` | Server mutations (creating/updating a `streamable_http` server triggers tool auto-discovery) |
 | `POST` / `PATCH` / `DELETE` | `/servers/{id}/tools[...]` | Tool mutations |
 
 ---
@@ -598,6 +715,17 @@ Base URL: `http://localhost:8080/api/v1`
   - ⚙️ **CI** — GitHub Actions with Go test/vet/fmt, frontend lint/build, Docker image builds
 </details>
 
+<details>
+<summary><strong>Phase 9: Native MCP Transport</strong></summary>
+
+- 🔌 **Inbound** — `/mcp` Streamable HTTP endpoint (official `modelcontextprotocol/go-sdk`, stateless per-request server) exposing the governed catalog with namespaced tools; `tools/call` reuses the existing invocation service — policy chain, schema validation, and audit trail unchanged
+- 🔑 **Auth** — JWT bearer bridge with RFC 6750 `WWW-Authenticate` challenges; MCP OAuth 2.1 deferred
+- 📡 **Outbound** — `MCPExecutor` with lazy, session-cached connections to live MCP upstreams, env-var credential references, and configurable timeouts
+- 🔍 **Discovery** — registration-time `tools/list` sync writes `source='discovered'` tools in a single transaction, preserving admin-set risk/enabled governance on conflict
+- 📊 **Observability** — upstream metrics extended with `service="mcp"`; MCP calls audited and metered identically to REST
+- ✅ Race-tested concurrent MCP client sessions; 14-check end-to-end gate script (`scripts/c1-gate-check.sh`); full decision log in `docs/phase-9-decisions.md`
+</details>
+
 ---
 
 ## ✅ Validation and Testing
@@ -607,7 +735,7 @@ Base URL: `http://localhost:8080/api/v1`
 ```bash
 cd backend
 gofmt -w . && go mod tidy
-go test ./... && go vet ./...
+go test -race ./... && go vet ./...
 ```
 
 ### Frontend
@@ -615,6 +743,16 @@ go test ./... && go vet ./...
 ```bash
 cd frontend
 npm run lint && npm run build
+```
+
+### MCP end-to-end gate
+
+```bash
+bash scripts/c1-gate-check.sh
+# 14 checks: auth rejection + Bearer challenge, initialize, exposure
+# filtering (disabled / medium-risk / inactive-server tools hidden),
+# tools/call with audit row, viewer policy denial, protocol-level
+# unknown-tool rejection
 ```
 
 ### Full-stack integration
@@ -643,6 +781,22 @@ Two modes, each idiomatic:
 - **Dev:** Vite dev server (`:5173`) → Go API (`:8080`) cross-origin, handled by chi CORS middleware
 - **Docker:** nginx serves static files and proxies `/api` same-origin — no CORS, no exposed API port needed
 
+### Why a stateless MCP server per request
+
+The `/mcp` endpoint builds a fresh MCP server per request from the live Postgres catalog (SDK stateless mode). Admin CRUD is reflected on the next `tools/list` with zero cache invalidation, there is no session state to leak across replicas, and the newest MCP protocol revision requires it.
+
+### Why namespaced tool names
+
+Tools are exposed as `serverName__toolName` so auto-discovered tools from multiple upstreams can never collide, and agents can see governance ownership at a glance.
+
+### Why credential references, not secrets, in connection_config
+
+Outbound upstream credentials are stored as environment variable names (`{"headers": {"Authorization": "UPSTREAM_TOKEN_ENV"}}`), enforced by service validation (`^[A-Z_][A-Z0-9_]*$`). The database never holds a raw upstream secret; values are resolved from the process environment at dial time.
+
+### Why tool provenance (`source`) drives executor routing
+
+Every pre-Phase-9 row defaulted to `transport_type='streamable_http'`, so transport alone cannot distinguish a live MCP upstream from a mock-executed demo server. The `discovered` marker — written only by a successful upstream `tools/list` — is the explicit signal that routes a server to the `MCPExecutor`. Existing behavior is preserved by construction.
+
 ### Why a Prometheus text parser instead of a metrics backend
 
 For a self-contained demo, parsing `/metrics` directly in the UI avoids running Prometheus + Grafana infrastructure. The parser normalizes the exposition format into chart-ready data. In production, swap this for Grafana dashboards backed by a real Prometheus server.
@@ -659,15 +813,34 @@ Password changes update the hash but existing JWTs remain valid until expiry (�
 
 ## ⚠️ Known Limitations
 
-- Only two GitHub tools; no Jira/Slack/Confluence executors
+- Only two GitHub tools; no Jira/Slack/Confluence REST executors
 - Only `low`-risk tools invocable; no confirmation flow for medium/high
 - Roles are global; no per-server/per-tool permissions
+- `/mcp` auth is a JWT bridge, not full MCP OAuth 2.1 (no protected-resource metadata or dynamic client registration)
+- No stdio upstreams; no SSE transport (deprecated by the MCP spec)
+- Discovery sync runs only on server create/update (no periodic re-sync or upstream health checks)
 - GitHub token is env-only; no credential reference store
 - Metrics UI parses `/metrics` directly (no historical data, no Grafana)
 - Traces go to stdout only (no Jaeger/Tempo backend)
 - JWT in localStorage (XSS-vulnerable); no refresh tokens or revocation
-- No MCP protocol transport; integrations are direct REST calls
 - No rate limiting, CSRF protection, or security headers yet
+
+---
+
+## 🌱 Future Enhancements
+
+Roughly in priority order, each already scoped with known tradeoffs (see `docs/phase-9-decisions.md`):
+
+- **MCP OAuth 2.1 authorization** — replace the JWT bridge with a real resource server: protected-resource metadata, `WWW-Authenticate` challenges with `resource_metadata`, dynamic client registration for agent clients
+- **stdio upstream support** — subprocess lifecycle management (needs a non-Alpine base image or sidecar model; deferred from Phase 9 deliberately)
+- **Periodic re-discovery + upstream health checks** — background reconciler that re-syncs `tools/list`, marks stale tools, and flips server status to `unhealthy` on repeated dial failures
+- **Per-server/per-tool permissions** — replace global roles with grants; the audit schema already carries user IDs
+- **Medium/high-risk confirmation flows** — pending-approval invocation state with admin review in the UI
+- **Refresh tokens + revocation** — token versioning or denylist; enables longer-lived agent credentials for `/mcp`
+- **Per-server MCP endpoints** — `/mcp/{serverName}` views for scoped agent access
+- **Rich content passthrough** — forward non-text MCP content blocks (images, resources) instead of the current text-first normalization
+- **Rate limiting, security headers, CSRF** — baseline hardening for internet-facing deployment
+- **Grafana/Jaeger backends** — replace the in-UI Prometheus parser and stdout traces with real backends
 
 ---
 
@@ -678,6 +851,9 @@ Password changes update the hash but existing JWTs remain valid until expiry (�
 | `go.mod requires go >= 1.26.5` in Docker | Base image too old | Use `golang:1.26-alpine` in Dockerfile |
 | CORS error in dev | Missing middleware | Ensure CORS middleware is first in `router.go` |
 | 401 on login | Wrong password hash | Regenerate hash with `cmd/passwordhash`, update DB (escape `$` as `\$`) |
+| 401 from MCP Inspector | Missing/expired JWT | Re-login via `/api/v1/auth/login`; check `WWW-Authenticate` header |
+| MCP client disconnects after 15s | Timeout middleware on `/mcp` | Timeout must be scoped to `/api/v1` only (see router.go) |
+| Registered upstream has no tools | Discovery failed (auth/network) | Check API logs for `tool discovery failed`; verify `connectionConfig` env vars are set on the API process |
 | Blank page in Docker | SPA routing | Ensure nginx `try_files $uri $uri/ /index.html;` |
 | API calls 404 in Docker | Missing proxy | Verify nginx `location /api/` block proxies to `api:8080` |
 | Tailwind not applying | Missing import | Ensure `@import "tailwindcss"` is in `index.css` |
@@ -691,7 +867,7 @@ Password changes update the hash but existing JWTs remain valid until expiry (�
 git checkout -b feat/my-feature
 
 # Backend
-cd backend && gofmt -w . && go test ./... && go vet ./...
+cd backend && gofmt -w . && go test -race ./... && go vet ./...
 
 # Frontend
 cd ../frontend && npm run lint && npm run build
@@ -705,8 +881,8 @@ Commit convention:
 ```text
 feat: add admin panel for server crud
 fix: correct CORS middleware ordering
-test: cover password change endpoint
-docs: update phase 8 readme
+test: cover mcp transport inbound and outbound paths
+docs: update phase 9 readme
 chore: add docker multi-stage builds
 ci: add github actions pipeline
 ```
@@ -717,12 +893,12 @@ ci: add github actions pipeline
 
 ```text
 Phase 0: ✅ Complete     Phase 4: ✅ Complete     Phase 8: ✅ Complete
-Phase 1: ✅ Complete     Phase 5: ✅ Complete
+Phase 1: ✅ Complete     Phase 5: ✅ Complete     Phase 9: ✅ Complete
 Phase 2: ✅ Complete     Phase 6: ✅ Complete
 Phase 3: ✅ Complete     Phase 7: ✅ Complete
 ```
 
-**All 8 phases complete.** The gateway is a fully functional, containerized, CI-validated full-stack platform ready for demo and portfolio presentation.
+**All 10 phases (0–9) complete.** The gateway is a fully functional, containerized, CI-validated full-stack platform that speaks native MCP in both directions — ready for demo and portfolio presentation.
 
 ---
 
@@ -741,6 +917,16 @@ docker compose up --build
 # 8. Metrics → watch charts update with the new invocation
 # 9. Admin → add/edit servers and tools via the UI
 # 10. Profile → change your password
+
+# 11. MCP: get a token and connect MCP Inspector to http://localhost:8080/mcp
+#     (Streamable HTTP, header: Authorization: Bearer $TOKEN)
+# 12. tools/list → only enabled low-risk tools, namespaced (github__list_issues)
+# 13. Call github__list_issues with {"owner":"golang","repo":"go","per_page":3}
+# 14. History → the MCP-invoked call appears, audited identically to REST
+
+# 15. Outbound: Admin → register a server with transport streamable_http
+#     pointing at a live MCP server → its tools auto-appear (source=discovered)
+# 16. Invoke a discovered tool → routed live through the MCPExecutor
 ```
 
-The complete flow — UI → API → policy → execution → audit → metrics — works end-to-end in a single `docker compose up`.
+The complete flow — UI and MCP clients → API → policy → execution → audit → metrics — works end-to-end in a single `docker compose up`.
