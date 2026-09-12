@@ -54,7 +54,7 @@ var (
 	UpstreamRequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "mcp_gateway_upstream_requests_total",
-			Help: "Total number of upstream API requests (GitHub, etc.)",
+			Help: "Total number of upstream API requests (service: github | mcp)",
 		},
 		[]string{"service", "status"},
 	)

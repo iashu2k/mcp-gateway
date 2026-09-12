@@ -229,10 +229,10 @@ func (s *InvocationService) Invoke(
 			tool.Name,
 		).Observe(duration.Seconds())
 
-		// Track upstream errors separately
-		if server.Name == "github" {
+		// Track upstream errors separately (GitHub REST, MCP upstreams)
+		if upstream := upstreamServiceName(server, tool); upstream != "" {
 			observability.UpstreamRequestsTotal.WithLabelValues(
-				"github",
+				upstream,
 				"error",
 			).Inc()
 		}
@@ -286,15 +286,32 @@ func (s *InvocationService) Invoke(
 		tool.Name,
 	).Observe(duration.Seconds())
 
-	// Track upstream success
-	if server.Name == "github" {
+	// Track upstream success (GitHub REST, MCP upstreams)
+	if upstream := upstreamServiceName(server, tool); upstream != "" {
 		observability.UpstreamRequestsTotal.WithLabelValues(
-			"github",
+			upstream,
 			"success",
 		).Inc()
 	}
 
 	return invocationResponse(succeeded, tool.Name), nil
+}
+
+// upstreamServiceName identifies which upstream an invocation hit, for the
+// bounded UpstreamRequestsTotal{service, status} counter. Returns "" for
+// in-process mock executions, which have no upstream. Phase 9: discovered
+// streamable_http tools report service="mcp".
+func upstreamServiceName(server domain.MCPServer, tool domain.MCPTool) string {
+	if server.Name == "github" {
+		return "github"
+	}
+
+	if server.TransportType == domain.TransportStreamableHTTP &&
+		tool.Source == domain.ToolSourceDiscovered {
+		return "mcp"
+	}
+
+	return ""
 }
 
 func parseInvocationIDs(
