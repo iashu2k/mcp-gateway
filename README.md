@@ -8,6 +8,18 @@ The project is inspired by the idea of an internal "USB-C for AI agents": a unif
 
 ---
 
+## Architecture
+
+<p align="center">
+  <img
+    src="./assets/mcp-gateway.png"
+    alt="MCP Gateway architecture"
+    width="1400"
+  />
+</p>
+
+---
+
 ## 📑 Table of Contents
 
 - [Project Vision](#-project-vision)
