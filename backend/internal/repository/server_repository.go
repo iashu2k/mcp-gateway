@@ -26,26 +26,28 @@ func (r *ServerRepository) Create(
 	server domain.MCPServer,
 ) (domain.MCPServer, error) {
 	const query = `
-		INSERT INTO mcp_servers (
-			name,
-			description,
-			base_url,
-			transport_type,
-			status,
-			owner_team
-		)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING
-			id,
-			name,
-			description,
-			base_url,
-			transport_type,
-			status,
-			owner_team,
-			created_at,
-			updated_at
-	`
+    INSERT INTO mcp_servers (
+      name,
+      description,
+      base_url,
+      transport_type,
+      status,
+      owner_team,
+      connection_config
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    RETURNING
+      id,
+      name,
+      description,
+      base_url,
+      transport_type,
+      status,
+      owner_team,
+      connection_config,
+      created_at,
+      updated_at
+  `
 
 	created, err := scanServer(r.db.QueryRow(
 		ctx,
@@ -56,6 +58,7 @@ func (r *ServerRepository) Create(
 		server.TransportType,
 		server.Status,
 		server.OwnerTeam,
+		server.ConnectionConfig,
 	))
 	if err != nil {
 		return domain.MCPServer{}, fmt.Errorf("insert MCP server: %w", err)
@@ -66,19 +69,20 @@ func (r *ServerRepository) Create(
 
 func (r *ServerRepository) List(ctx context.Context) ([]domain.MCPServer, error) {
 	const query = `
-		SELECT
-			id,
-			name,
-			description,
-			base_url,
-			transport_type,
-			status,
-			owner_team,
-			created_at,
-			updated_at
-		FROM mcp_servers
-		ORDER BY created_at DESC
-	`
+    SELECT
+      id,
+      name,
+      description,
+      base_url,
+      transport_type,
+      status,
+      owner_team,
+      connection_config,
+      created_at,
+      updated_at
+    FROM mcp_servers
+    ORDER BY created_at DESC
+  `
 
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
@@ -109,19 +113,20 @@ func (r *ServerRepository) GetByID(
 	id uuid.UUID,
 ) (domain.MCPServer, error) {
 	const query = `
-		SELECT
-			id,
-			name,
-			description,
-			base_url,
-			transport_type,
-			status,
-			owner_team,
-			created_at,
-			updated_at
-		FROM mcp_servers
-		WHERE id = $1
-	`
+    SELECT
+      id,
+      name,
+      description,
+      base_url,
+      transport_type,
+      status,
+      owner_team,
+      connection_config,
+      created_at,
+      updated_at
+    FROM mcp_servers
+    WHERE id = $1
+  `
 
 	server, err := scanServer(r.db.QueryRow(ctx, query, id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -139,27 +144,29 @@ func (r *ServerRepository) Update(
 	server domain.MCPServer,
 ) (domain.MCPServer, error) {
 	const query = `
-		UPDATE mcp_servers
-		SET
-			name = $2,
-			description = $3,
-			base_url = $4,
-			transport_type = $5,
-			status = $6,
-			owner_team = $7,
-			updated_at = NOW()
-		WHERE id = $1
-		RETURNING
-			id,
-			name,
-			description,
-			base_url,
-			transport_type,
-			status,
-			owner_team,
-			created_at,
-			updated_at
-	`
+    UPDATE mcp_servers
+    SET
+      name = $2,
+      description = $3,
+      base_url = $4,
+      transport_type = $5,
+      status = $6,
+      owner_team = $7,
+      connection_config = $8,
+      updated_at = NOW()
+    WHERE id = $1
+    RETURNING
+      id,
+      name,
+      description,
+      base_url,
+      transport_type,
+      status,
+      owner_team,
+      connection_config,
+      created_at,
+      updated_at
+  `
 
 	updated, err := scanServer(r.db.QueryRow(
 		ctx,
@@ -171,6 +178,7 @@ func (r *ServerRepository) Update(
 		server.TransportType,
 		server.Status,
 		server.OwnerTeam,
+		server.ConnectionConfig,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.MCPServer{}, ErrServerNotFound
@@ -215,6 +223,7 @@ func scanServer(row rowScanner) (domain.MCPServer, error) {
 		&server.TransportType,
 		&server.Status,
 		&server.OwnerTeam,
+		&server.ConnectionConfig,
 		&server.CreatedAt,
 		&server.UpdatedAt,
 	)

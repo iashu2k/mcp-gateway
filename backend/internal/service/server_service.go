@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"regexp"
 
 	"net/url"
 	"strings"
@@ -59,17 +62,29 @@ func (s *ServerService) Create(
 		request.TransportType = domain.TransportStreamableHTTP
 	}
 
+	connectionConfig := json.RawMessage(`{}`)
+	if request.ConnectionConfig != nil {
+		connectionConfig = json.RawMessage(
+			strings.TrimSpace(string(*request.ConnectionConfig)),
+		)
+	}
+
 	if err := validateCreateRequest(request); err != nil {
 		return domain.MCPServer{}, err
 	}
 
 	server := domain.MCPServer{
-		Name:          request.Name,
-		Description:   request.Description,
-		BaseURL:       request.BaseURL,
-		TransportType: request.TransportType,
-		Status:        domain.ServerStatusActive,
-		OwnerTeam:     request.OwnerTeam,
+		Name:             request.Name,
+		Description:      request.Description,
+		BaseURL:          request.BaseURL,
+		TransportType:    request.TransportType,
+		Status:           domain.ServerStatusActive,
+		OwnerTeam:        request.OwnerTeam,
+		ConnectionConfig: connectionConfig,
+	}
+
+	if err := validateConnectionConfigField(server.ConnectionConfig); err != nil {
+		return domain.MCPServer{}, err
 	}
 
 	created, err := s.repository.Create(ctx, server)
@@ -132,8 +147,17 @@ func (s *ServerService) Update(
 	if request.OwnerTeam != nil {
 		existing.OwnerTeam = strings.TrimSpace(*request.OwnerTeam)
 	}
+	if request.ConnectionConfig != nil {
+		existing.ConnectionConfig = json.RawMessage(
+			strings.TrimSpace(string(*request.ConnectionConfig)),
+		)
+	}
 
 	if err := validateServer(existing); err != nil {
+		return domain.MCPServer{}, err
+	}
+
+	if err := validateConnectionConfigField(existing.ConnectionConfig); err != nil {
 		return domain.MCPServer{}, err
 	}
 
@@ -250,6 +274,63 @@ func validateServer(server domain.MCPServer) error {
 
 	if len(fieldErrors) > 0 {
 		return ValidationError{Fields: fieldErrors}
+	}
+
+	return nil
+}
+
+// envVarNamePattern enforces the Phase 9 credential-reference rule (D5
+// security note): connection_config header values name environment
+// variables, they never hold raw secrets.
+var envVarNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
+// validateConnectionConfigField wraps connection-config validation in the
+// service's standard ValidationError shape.
+func validateConnectionConfigField(raw json.RawMessage) error {
+	if err := validateConnectionConfig(raw); err != nil {
+		return ValidationError{
+			Fields: []FieldError{{Field: "connectionConfig", Message: err.Error()}},
+		}
+	}
+	return nil
+}
+
+func validateConnectionConfig(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return errors.New("connectionConfig is required")
+	}
+
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return errors.New("must be valid JSON")
+	}
+
+	root, ok := decoded.(map[string]any)
+	if !ok {
+		return errors.New("must be a JSON object")
+	}
+
+	headers, exists := root["headers"]
+	if !exists {
+		return nil
+	}
+
+	headerMap, ok := headers.(map[string]any)
+	if !ok {
+		return errors.New(`"headers" must be a JSON object`)
+	}
+
+	for name, value := range headerMap {
+		reference, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("header %q must name an environment variable", name)
+		}
+		if !envVarNamePattern.MatchString(reference) {
+			return fmt.Errorf(
+				"header %q must reference an environment variable name (e.g. GITHUB_TOKEN), not a raw secret",
+				name,
+			)
+		}
 	}
 
 	return nil

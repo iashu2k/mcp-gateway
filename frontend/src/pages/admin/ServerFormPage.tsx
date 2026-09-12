@@ -12,6 +12,12 @@ type ServerFormData = {
   transportType: MCPServer["transportType"];
   status: MCPServer["status"];
   ownerTeam: string;
+  // Held as a JSON string for editing; parsed into an object on submit.
+  connectionConfigJson: string;
+};
+
+type ServerPayload = Omit<ServerFormData, "connectionConfigJson"> & {
+  connectionConfig: Record<string, unknown>;
 };
 
 export default function ServerFormPage() {
@@ -27,6 +33,7 @@ export default function ServerFormPage() {
     transportType: "streamable_http",
     status: "active",
     ownerTeam: "",
+    connectionConfigJson: "{}",
   });
   const [error, setError] = useState("");
 
@@ -45,12 +52,17 @@ export default function ServerFormPage() {
         transportType: existing.transportType,
         status: existing.status,
         ownerTeam: existing.ownerTeam,
+        connectionConfigJson: JSON.stringify(
+          existing.connectionConfig ?? {},
+          null,
+          2,
+        ),
       });
     }
   }, [existing]);
 
   const saveMutation = useMutation({
-    mutationFn: (data: ServerFormData) =>
+    mutationFn: (data: ServerPayload) =>
       isEdit ? updateServer(serverId!, data) : createServer(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["servers"] });
@@ -64,7 +76,17 @@ export default function ServerFormPage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    saveMutation.mutate(form);
+
+    let connectionConfig: Record<string, unknown>;
+    try {
+      connectionConfig = JSON.parse(form.connectionConfigJson || "{}");
+    } catch {
+      setError("Connection config must be valid JSON");
+      return;
+    }
+
+    const { connectionConfigJson: _, ...rest } = form;
+    saveMutation.mutate({ ...rest, connectionConfig });
   };
 
   const set =
@@ -185,6 +207,24 @@ export default function ServerFormPage() {
             className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500"
             placeholder="platform"
           />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Connection Config
+          </label>
+          <textarea
+            value={form.connectionConfigJson}
+            onChange={set("connectionConfigJson")}
+            rows={4}
+            spellCheck={false}
+            className="w-full border border-gray-300 rounded-md px-3 py-2 font-mono text-sm focus:ring-indigo-500 focus:border-indigo-500"
+            placeholder='{"headers": {"Authorization": "UPSTREAM_TOKEN_ENV"}}'
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            Header values must be environment variable names, never raw secrets.
+            Used when this server is a live streamable_http upstream.
+          </p>
         </div>
 
         <div className="flex justify-end space-x-3 pt-4">
