@@ -1,6 +1,8 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AuthProvider, useAuth } from "./hooks/useAuth";
+import { useAuth } from "./hooks/useAuth";
+import { AuthProvider } from "./components/AuthProvider";
 import Layout from "./components/Layout";
 import LoginPage from "./pages/login/LoginPage";
 import ServersPage from "./pages/servers/ServersPage";
@@ -10,8 +12,10 @@ import InvocationsPage from "./pages/invocations/InvocationsPage";
 import AdminServersPage from "./pages/admin/AdminServersPage";
 import ServerFormPage from "./pages/admin/ServerFormPage";
 import ToolFormPage from "./pages/admin/ToolFormPage";
-import MetricsPage from "./pages/metrics/MetricsPage";
 import ProfilePage from "./pages/profile/ProfilePage";
+
+// Lazy-loaded: keeps Recharts out of the main bundle (chunk-size warning).
+const MetricsPage = lazy(() => import("./pages/metrics/MetricsPage"));
 
 const queryClient = new QueryClient();
 
@@ -71,7 +75,20 @@ function App() {
                 path="admin/servers/:serverId/tools/:toolId/edit"
                 element={<ToolFormPage />}
               />
-              <Route path="metrics" element={<MetricsPage />} />
+              <Route
+                path="metrics"
+                element={
+                  <Suspense
+                    fallback={
+                      <div className="p-6 text-gray-500">
+                        Loading metrics...
+                      </div>
+                    }
+                  >
+                    <MetricsPage />
+                  </Suspense>
+                }
+              />
               <Route path="profile" element={<ProfilePage />} />
             </Route>
           </Routes>
