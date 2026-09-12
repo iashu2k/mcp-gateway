@@ -25,6 +25,9 @@ func RequireAuthentication(
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rawToken, err := extractBearerToken(r.Header.Get("Authorization"))
 			if err != nil {
+				// RFC 6750: a protected resource must challenge with the
+				// Bearer scheme. MCP clients (Phase 9) rely on this header.
+				w.Header().Set("WWW-Authenticate", "Bearer")
 				writeError(
 					w,
 					http.StatusUnauthorized,
@@ -45,6 +48,12 @@ func RequireAuthentication(
 					message = "access token has expired"
 				}
 
+				// RFC 6750 section 3.1: invalid or expired tokens are
+				// reported with the invalid_token error code.
+				w.Header().Set(
+					"WWW-Authenticate",
+					`Bearer error="invalid_token"`,
+				)
 				writeError(
 					w,
 					http.StatusUnauthorized,

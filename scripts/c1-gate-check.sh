@@ -116,12 +116,15 @@ done
 curl -sf "$API_URL/health" >/dev/null || { echo "API failed to start"; exit 1; }
 
 echo
-echo "== T1: unauthenticated /mcp is rejected"
-CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$MCP_URL" \
+echo "== T1: unauthenticated /mcp is rejected with a Bearer challenge"
+HEADERS=$(curl -s -D - -o /dev/null -X POST "$MCP_URL" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":0,"method":"tools/list","params":{}}')
-[ "$CODE" = "401" ] && pass "no token -> 401" || fail "no token -> expected 401, got $CODE"
+printf '%s' "$HEADERS" | grep -q '^HTTP/.* 401' \
+  && pass "no token -> 401" || fail "no token -> expected 401"
+printf '%s' "$HEADERS" | grep -qi '^WWW-Authenticate: Bearer' \
+  && pass "WWW-Authenticate: Bearer present" || fail "challenge header missing"
 
 echo "== T2: developer login"
 DEV_TOKEN=$(login developer@mcp-gateway.local DeveloperPass123)
